@@ -36,6 +36,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         activeDiscoveryPrompt = null,
         activeRequestQuery = null,
         dirtyDiscoveryPredicateIds = {},
+        applyingRailSelections = false,
 
         form = ns.Search.Form(ns);
 
@@ -302,6 +303,59 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         });
     }
 
+    function getRailPredicateInputs() {
+        var formId = form.id(),
+            inputs = $(),
+            seenPredicateIds = {};
+
+        $("[data-asset-share-predicate-id][form=\"" + formId + "\"]").each(function() {
+            var predicateId = ns.Data.attr($(this), "predicate-id");
+
+            if (!predicateId || seenPredicateIds[predicateId]) {
+                return;
+            }
+            seenPredicateIds[predicateId] = true;
+
+            inputs = inputs.add($(":input[for=\"" + predicateId + "\"][form=\"" + formId + "\"]"));
+        });
+
+        return inputs;
+    }
+
+    function applyDiscoveryQueryToRail(query) {
+        var lookup = {};
+
+        form.deserialize(query).getAll().forEach(function(field) {
+            if (!lookup[field.name]) {
+                lookup[field.name] = [];
+            }
+            lookup[field.name].push(field.value);
+        });
+
+        // Suppress the auto-search "change"/"click" bindings (search.js:registerEvents) while
+        // these rail inputs are set programmatically, since many predicates auto-submit on change.
+        applyingRailSelections = true;
+
+        try {
+            getRailPredicateInputs().each(function() {
+                var input = $(this),
+                    values = lookup[input.attr("name")] || [];
+
+                if (input.is(":checkbox, :radio")) {
+                    input.prop("checked", values.indexOf(input.val()) > -1);
+                } else if (input.is("select") && input.prop("multiple")) {
+                    input.find("option").each(function() {
+                        $(this).prop("selected", values.indexOf($(this).val()) > -1);
+                    });
+                } else {
+                    input.val(values.length ? values[0] : "");
+                }
+            });
+        } finally {
+            applyingRailSelections = false;
+        }
+    }
+
     function discoverySearch() {
         var prompt = getSearchPrompt(),
             context = form.serializeDiscoveryContextFor(
@@ -328,6 +382,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             showDiscoveryQuery(query);
             activeDiscoveryQuery = query;
             activeDiscoveryPrompt = prompt;
+            applyDiscoveryQueryToRail(query);
             submitDiscoveryQuery(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
         }).fail(function() {
             clearDiscoveryState();
@@ -350,6 +405,11 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     }
 
     function search(e) {
+        if (applyingRailSelections) {
+            // Rail inputs are being synced to a discovery query; this change/click
+            // is programmatic, not a user edit, so it must not re-trigger a search.
+            return;
+        }
         if (e) {
             e.preventDefault();
         }
