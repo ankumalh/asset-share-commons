@@ -431,6 +431,7 @@ AssetShare.Search.Form = function (ns) {
         serializeQueryFor: serializeQueryFor,
         serializeJsonFor: serializeJsonFor,
         serializeDiscoveryContextFor: serializeDiscoveryContextFor,
+        deserialize: deserialize,
         id: getId,
         submit: submit,
         submitQuery: submitQuery
