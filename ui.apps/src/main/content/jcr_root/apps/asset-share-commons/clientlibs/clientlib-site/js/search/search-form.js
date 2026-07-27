@@ -84,7 +84,7 @@ AssetShare.Search.Form = function (ns) {
                                 relatedInputValue = formData.get(relativeInputName);
                             if (relatedInputValue) {
                                 // Add to the clean form
-                                if (cleanFormData.get(inputName) !== inputValue) {
+                                if (cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
                                     // Never add the same exact inputName=inputValue twice
                                     cleanFormData.add(inputName, inputValue);
                                 }
@@ -94,7 +94,7 @@ AssetShare.Search.Form = function (ns) {
                     });
                 } else {
                     // No predicateId, so this is a stand-alone field and always add it unless its already exists
-                   if (inputValue !== '' && cleanFormData.get(inputName) !== inputValue) {
+                   if (inputValue !== '' && cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
                        // Never add the same exact inputName=inputValue twice
                        cleanFormData.add(inputName, inputValue);
                    }
@@ -131,6 +131,148 @@ AssetShare.Search.Form = function (ns) {
         return buildFormData(formData, event).serialize();
     }
 
+    function deserialize(query) {
+        var deserializedFormData = new ns.FormData();
+
+        $.each((query || "").replace(/^\?/, "").split("&"), function(index, pair) {
+            var separator,
+                name,
+                value;
+
+            if (!pair) {
+                return;
+            }
+
+            separator = pair.indexOf("=");
+            name = separator > -1 ? pair.substring(0, separator) : pair;
+            value = separator > -1 ? pair.substring(separator + 1) : "";
+
+            try {
+                name = decodeURIComponent(name.replace(/\+/g, " "));
+                value = decodeURIComponent(value.replace(/\+/g, " "));
+            } catch (e) {
+                return;
+            }
+
+            if (name) {
+                deserializedFormData.add(name, value);
+            }
+        });
+
+        return deserializedFormData;
+    }
+
+    function removeAll(formDataToUpdate, name) {
+        while (typeof formDataToUpdate.get(name) !== "undefined") {
+            formDataToUpdate.remove(name);
+        }
+    }
+
+    function serializeQueryFor(query, event) {
+        var queryFormData = deserialize(query);
+
+        $("[data-asset-share-search-actions]").each(function() {
+            removeAll(queryFormData, $(this).attr("name"));
+        });
+
+        $("[data-asset-share-search-actions*=\"all\"],[data-asset-share-search-actions*=\"" + event + "\"]").each(function() {
+            if ($.trim($(this).val()) !== "") {
+                queryFormData.set($(this).attr("name"), $(this).val());
+            }
+        });
+
+        return queryFormData.serialize();
+    }
+
+    function applyDiscoverySort(query) {
+        var sortParameterNames = ["orderby", "orderby.sort", "orderby.case"],
+            sortValues = {};
+
+        ns.Search.DiscoveryQuery.parse(query).forEach(function(parameter) {
+            if (sortParameterNames.indexOf(parameter.name) > -1) {
+                sortValues[parameter.name] = parameter.value;
+            }
+        });
+
+        sortParameterNames.forEach(function(name) {
+            var value,
+                inputs;
+
+            if (!Object.prototype.hasOwnProperty.call(sortValues, name)) {
+                return;
+            }
+
+            value = sortValues[name];
+            inputs = $("[name=\"" + name + "\"][form=\"" + getId() + "\"]");
+
+            inputs.each(function() {
+                var input = $(this),
+                    dropdown = input.closest(".ui.dropdown"),
+                    matchingItem;
+
+                if (dropdown.length) {
+                    matchingItem = dropdown.find(".item").filter(function() {
+                        return $(this).attr("data-value") === value;
+                    }).first();
+
+                    if (matchingItem.length && typeof dropdown.dropdown === "function") {
+                        dropdown.dropdown("set selected", value);
+                    }
+                }
+
+                input.val(value);
+            });
+        });
+    }
+
+    function getDiscoveryPredicateReplacement(predicateId, currentFormData) {
+        var predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
+                "\"][form=\"" + getId() + "\"]"),
+            relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]"),
+            propertyField = predicateFields.filter(function() {
+                return /\.property$/.test($(this).attr("name") || "");
+            }).first(),
+            fieldNames,
+            parameters;
+
+        if (!propertyField.length) {
+            return null;
+        }
+
+        fieldNames = predicateFields.add(relatedInputs).map(function() {
+            return $(this).attr("name");
+        }).get();
+
+        parameters = currentFormData.getAll().filter(function(parameter) {
+            return fieldNames.indexOf(parameter.name) > -1;
+        });
+
+        return {
+            propertyPath: propertyField.val(),
+            parameters: parameters
+        };
+    }
+
+    function serializeDiscoveryQueryFor(query, event, dirtyPredicateIds) {
+        var replacements = [],
+            currentFormData;
+
+        reset();
+        currentFormData = buildFormData(formData, event);
+
+        (dirtyPredicateIds || []).forEach(function(predicateId) {
+            var replacement = getDiscoveryPredicateReplacement(predicateId, currentFormData);
+
+            if (replacement) {
+                replacements.push(replacement);
+            }
+        });
+
+        query = ns.Search.DiscoveryQuery.mergePropertyPredicates(query, replacements);
+
+        return serializeQueryFor(query, event);
+    }
+
     function serializeJsonFor(event, resetForm, removeKeys) {
         var json = {};
 
@@ -156,6 +298,151 @@ AssetShare.Search.Form = function (ns) {
         });
 
         return JSON.stringify(json);
+    }
+
+    function fieldsToJson(fields, removeKeys) {
+        var json = {};
+
+        removeKeys = removeKeys || [];
+
+        fields.forEach(function(field) {
+            if (removeKeys.indexOf(field.name) > -1) {
+                return;
+            }
+
+            if (json[field.name]) {
+                if (!Array.isArray(json[field.name])) {
+                    json[field.name] = [json[field.name]];
+                }
+                json[field.name].push(field.value);
+            } else {
+                json[field.name] = field.value;
+            }
+        });
+
+        return json;
+    }
+
+    function getInputLabel(input) {
+        var inputElement = $(input),
+            label;
+
+        if (inputElement.attr("id")) {
+            label = $("label[for=\"" + inputElement.attr("id") + "\"]").first().text();
+        }
+
+        if (!label) {
+            label = inputElement.closest(".checkbox").find("label").first().text();
+        }
+
+        return $.trim(label || "");
+    }
+
+    function getPredicateTitle(predicateId, relatedInputs) {
+        var title = relatedInputs.closest(".content").prev(".title").first().text();
+
+        if (!title) {
+            title = relatedInputs.closest(".accordion").find(".title").first().text();
+        }
+
+        return $.trim(title || predicateId).replace(/\s+/g, " ");
+    }
+
+    function getPredicateOptions(relatedInputs) {
+        var options = [];
+
+        relatedInputs.each(function(index, input) {
+            var inputElement = $(input),
+                type = inputElement.attr("type") || input.tagName.toLowerCase();
+
+            if (inputElement.is("select")) {
+                inputElement.find("option").each(function(optionIndex, option) {
+                    var optionElement = $(option);
+
+                    if ($.trim(optionElement.val()) !== "") {
+                        options.push({
+                            name: inputElement.attr("name"),
+                            value: optionElement.val(),
+                            label: $.trim(optionElement.text()).replace(/\s+/g, " "),
+                            selected: optionElement.is(":selected"),
+                            disabled: optionElement.is(":disabled")
+                        });
+                    }
+                });
+            } else if (type === "checkbox" || type === "radio") {
+                options.push({
+                    name: inputElement.attr("name"),
+                    value: inputElement.val(),
+                    label: getInputLabel(input),
+                    selected: inputElement.is(":checked"),
+                    disabled: inputElement.is(":disabled")
+                });
+            }
+        });
+
+        return options;
+    }
+
+    function serializeDiscoveryContextFor(event, resetForm, removeKeys) {
+        var context,
+            predicates = {};
+
+        if (resetForm) {
+            reset();
+        }
+
+        removeKeys = removeKeys || [];
+
+        context = fieldsToJson(buildFormData(formData, event).getAll(), removeKeys);
+        context.selectedQuery = $.extend({}, context);
+        context.predicates = [];
+
+        $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function(index, element) {
+            var field = $(element),
+                predicateId = ns.Data.attr(field, "predicate-id"),
+                predicate;
+
+            if (!predicateId) {
+                return;
+            }
+
+            if (!predicates[predicateId]) {
+                predicates[predicateId] = {
+                    id: predicateId,
+                    title: "",
+                    fields: [],
+                    inputs: [],
+                    options: []
+                };
+                context.predicates.push(predicates[predicateId]);
+            }
+
+            predicate = predicates[predicateId];
+            predicate.fields.push({
+                name: field.attr("name"),
+                value: field.val()
+            });
+        });
+
+        context.predicates.forEach(function(predicate) {
+            var relatedInputs = $(":input[for=\"" + predicate.id + "\"][form=\"" + getId() + "\"]");
+
+            predicate.title = getPredicateTitle(predicate.id, relatedInputs);
+            predicate.inputs = relatedInputs.map(function(index, input) {
+                var inputElement = $(input);
+
+                return {
+                    name: inputElement.attr("name"),
+                    type: inputElement.attr("type") || input.tagName.toLowerCase(),
+                    value: inputElement.val(),
+                    selected: inputElement.is(":checked") ||
+                        inputElement.is("select") && inputElement.val() !== ""
+                };
+            }).get();
+            predicate.options = getPredicateOptions(relatedInputs);
+        });
+
+        return JSON.stringify(context);
     }
 
     function _adjustFormData(formData) {
@@ -202,11 +489,11 @@ AssetShare.Search.Form = function (ns) {
         return valid;
     }
 
-    function submit(serializationType, resetForm, success) {
+    function submit(serializationType, resetForm, success, failure) {
         var formToSubmit = serializeFor(serializationType, resetForm);
 
         if (_valid(formToSubmit)) {
-            $.when($.get(getUrl(), formToSubmit)).then(success);
+            $.when($.get(getUrl(), formToSubmit)).then(success).fail(failure);
             return true;
         } else {
             return false;
@@ -230,7 +517,11 @@ AssetShare.Search.Form = function (ns) {
     return {
         url: getUrl,
         serializeFor: serializeFor,
+        serializeQueryFor: serializeQueryFor,
+        serializeDiscoveryQueryFor: serializeDiscoveryQueryFor,
+        applyDiscoverySort: applyDiscoverySort,
         serializeJsonFor: serializeJsonFor,
+        serializeDiscoveryContextFor: serializeDiscoveryContextFor,
         id: getId,
         submit: submit,
         submitQuery: submitQuery

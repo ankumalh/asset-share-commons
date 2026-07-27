@@ -32,7 +32,10 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         DISCOVERY_COMMAND = "/discovery",
 
         running = false,
-        queryParamsOverride = null,
+        activeDiscoveryQuery = null,
+        activeDiscoveryPrompt = null,
+        activeRequestQuery = null,
+        dirtyDiscoveryPredicateIds = {},
 
         form = ns.Search.Form(ns);
 
@@ -58,8 +61,8 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         ns.Elements.update(fragmentHtml, ACTION_SEARCH);
 
         ns.Navigation.gotoTop();
-        setAddressBar(queryParamsOverride || form.serializeFor(ACTION_DEEP_LINK));
-        queryParamsOverride = null;
+        setAddressBar(activeRequestQuery || form.serializeFor(ACTION_DEEP_LINK));
+        activeRequestQuery = null;
 
         trigger(ns.Events.SEARCH_END, [EVENT_SEARCH_TYPE_FULL]);
         running = false;
@@ -73,32 +76,57 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         return ns.Elements.element("discovery-query-output");
     }
 
+    function getDiscoveryQueryTitleElement() {
+        return ns.Elements.element("discovery-query-title");
+    }
+
     function getDiscoveryEndpoint() {
-        return ns.Data.attr(ns.Elements.element("discovery-search"), "discovery-agent-endpoint") || "/discovery";
+        return ns.Data.attr(
+            ns.Elements.element("discovery-search"),
+            "discovery-agent-endpoint"
+        ) || "/bin/asset-share-commons/discovery";
     }
 
     function isDiscoveryCommandValue(value) {
         return value && new RegExp("^" + DISCOVERY_COMMAND + "(\\s|$)").test($.trim(value));
     }
 
-    function getSearchPrompt() {
-        var searchInput = $("#" + form.id()).find(":input").add($("[form='" + form.id() + "']")).filter(function() {
+    function getDiscoverySearchInputs() {
+        return $("#" + form.id()).find(":input").add($("[form='" + form.id() + "']")).filter(function() {
             return isDiscoveryCommandValue($(this).val());
-        }).first();
+        });
+    }
 
-        return $.trim(searchInput.val()).substring(DISCOVERY_COMMAND.length).replace(/^\s+/, "");
+    function getSearchPrompt() {
+        var searchInput = getDiscoverySearchInputs().first();
+
+        return searchInput.length ?
+            $.trim(searchInput.val()).substring(DISCOVERY_COMMAND.length).replace(/^\s+/, "") :
+            "";
     }
 
     function getDiscoverySearchFieldNames() {
-        return $("#" + form.id()).find(":input").add($("[form='" + form.id() + "']")).filter(function() {
-            return isDiscoveryCommandValue($(this).val());
-        }).map(function() {
+        return getDiscoverySearchInputs().map(function() {
             return $(this).attr("name");
         }).get();
     }
 
-    function isDiscoverySearch() {
-        return getSearchPrompt().length > 0;
+    function hasDiscoveryCommand() {
+        return getDiscoverySearchInputs().length > 0;
+    }
+
+    function clearDiscoveryState() {
+        activeDiscoveryQuery = null;
+        activeDiscoveryPrompt = null;
+        dirtyDiscoveryPredicateIds = {};
+    }
+
+    function markDiscoveryPredicateDirty() {
+        var predicateId = $(this).attr("for");
+
+        if (activeDiscoveryQuery && predicateId) {
+            dirtyDiscoveryPredicateIds[predicateId] = true;
+        }
     }
 
     function objectToQueryString(queryObject) {
@@ -124,38 +152,102 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     function parseDiscoveryResponse(response) {
         var query = response;
 
+        if (!query) {
+            return "";
+        }
+
         if (typeof query === "string") {
             try {
                 query = JSON.parse(query);
             } catch (e) {
-                return query;
+                return query.indexOf("=") > -1 ? query : "";
             }
         }
 
-        if (query.query) {
+        if (!query || typeof query !== "object" || Array.isArray(query) || query.error) {
+            return "";
+        }
+
+        if (typeof query.query !== "undefined") {
             query = query.query;
-        } else if (query.queryBuilderQuery) {
+        } else if (typeof query.queryBuilderQuery !== "undefined") {
             query = query.queryBuilderQuery;
-        } else if (query.querybuilder) {
+        } else if (typeof query.querybuilder !== "undefined") {
             query = query.querybuilder;
-        } else if (query.queryBuilder) {
+        } else if (typeof query.queryBuilder !== "undefined") {
             query = query.queryBuilder;
-        } else if (query.queryParameters) {
+        } else if (typeof query.queryParameters !== "undefined") {
             query = query.queryParameters;
-        } else if (query.params) {
+        } else if (typeof query.params !== "undefined") {
             query = query.params;
         }
 
         if (typeof query === "string") {
-            return query;
+            return query.indexOf("=") > -1 ? query : "";
+        }
+
+        if (!query || typeof query !== "object" || Array.isArray(query)) {
+            return "";
         }
 
         return objectToQueryString(query);
     }
 
+    function normalizeOrderByValue(value) {
+        var trimmed = $.trim(value);
+
+        // QueryBuilder sorts by a JCR property only when the value is prefixed with "@"
+        // (e.g. "@jcr:content/metadata/dam:size"). The keyword sorts "path" and "nodename",
+        // and already-qualified values, are left untouched.
+        if (trimmed === "" ||
+            trimmed.charAt(0) === "@" ||
+            trimmed === "path" ||
+            trimmed === "nodename") {
+            return value;
+        }
+
+        return "@" + trimmed;
+    }
+
+    function normalizeDiscoveryQuery(query) {
+        // The discovery agent may return an "orderby" property sort without the "@" prefix
+        // QueryBuilder requires; add it so the sort is honored. Only the "orderby" param is
+        // touched (not orderby.sort / orderby.case).
+        if (!query || query.indexOf("orderby=") === -1) {
+            return query;
+        }
+
+        return $.map(query.split("&"), function(pair) {
+            var separator = pair.indexOf("="),
+                name = separator > -1 ? pair.substring(0, separator) : pair,
+                value = separator > -1 ? pair.substring(separator + 1) : "",
+                decodedName,
+                decodedValue;
+
+            try {
+                decodedName = decodeURIComponent(name.replace(/\+/g, " "));
+            } catch (e) {
+                return pair;
+            }
+
+            if (decodedName !== "orderby") {
+                return pair;
+            }
+
+            try {
+                decodedValue = decodeURIComponent(value.replace(/\+/g, " "));
+            } catch (e) {
+                return pair;
+            }
+
+            return name + "=" + encodeURIComponent(normalizeOrderByValue(decodedValue));
+        }).join("&");
+    }
+
     function showDiscoveryQuery(query) {
         var queryElement = getDiscoveryQueryElement(),
             outputElement = getDiscoveryQueryOutputElement(),
+            titleElement = getDiscoveryQueryTitleElement(),
             decodedQuery;
 
         try {
@@ -164,38 +256,94 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             decodedQuery = query;
         }
 
+        titleElement.text(ns.Data.attr(queryElement, "query-title"));
         outputElement.text(decodedQuery);
-        queryElement.removeClass("hidden");
+        queryElement.removeClass("hidden negative");
+    }
+
+    function hideDiscoveryQuery() {
+        var queryElement = getDiscoveryQueryElement();
+
+        getDiscoveryQueryOutputElement().empty();
+        queryElement.addClass("hidden").removeClass("negative");
+    }
+
+    function showDiscoveryError() {
+        var queryElement = getDiscoveryQueryElement();
+
+        getDiscoveryQueryTitleElement().text(ns.Data.attr(queryElement, "error-title"));
+        getDiscoveryQueryOutputElement().text(ns.Data.attr(queryElement, "error-message"));
+        queryElement.removeClass("hidden").addClass("negative");
+    }
+
+    function searchFailed(searchType, discoveryFailure) {
+        activeRequestQuery = null;
+        if (discoveryFailure) {
+            showDiscoveryError();
+        }
+        trigger(ns.Events.SEARCH_INVALID, [searchType]);
+        running = false;
+    }
+
+    function submitDiscoveryQuery(action, success, searchType) {
+        var query = form.serializeDiscoveryQueryFor(
+            activeDiscoveryQuery,
+            action,
+            Object.keys(dirtyDiscoveryPredicateIds)
+        );
+
+        activeRequestQuery = query;
+        form.submitQuery(query, function(fragmentHtml) {
+            activeDiscoveryQuery = query;
+            dirtyDiscoveryPredicateIds = {};
+            success(fragmentHtml);
+        }).fail(function() {
+            searchFailed(searchType, true);
+        });
     }
 
     function discoverySearch() {
         var prompt = getSearchPrompt(),
-            context = form.serializeJsonFor(ACTION_SEARCH, true, getDiscoverySearchFieldNames());
+            context = form.serializeDiscoveryContextFor(
+                ACTION_SEARCH,
+                true,
+                getDiscoverySearchFieldNames()
+            );
+
+        clearDiscoveryState();
+        hideDiscoveryQuery();
 
         $.when($.post(getDiscoveryEndpoint(), {
             prompt: prompt,
             context: context
         })).then(function(response) {
-            var query = parseDiscoveryResponse(response);
+            var query = normalizeDiscoveryQuery(parseDiscoveryResponse(response));
 
+            if (!query) {
+                searchFailed(EVENT_SEARCH_TYPE_FULL, true);
+                return;
+            }
+
+            form.applyDiscoverySort(query);
             showDiscoveryQuery(query);
-            queryParamsOverride = query;
-            form.submitQuery(query, processSearch).fail(function() {
-                queryParamsOverride = null;
-                trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_FULL]);
-                running = false;
-            });
+            activeDiscoveryQuery = query;
+            activeDiscoveryPrompt = prompt;
+            submitDiscoveryQuery(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
         }).fail(function() {
-            queryParamsOverride = null;
-            trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_FULL]);
-            running = false;
+            clearDiscoveryState();
+            searchFailed(EVENT_SEARCH_TYPE_FULL, true);
         });
     }
 
     function processLoadMore(fragmentHtml) {
         ns.Elements.update(fragmentHtml, ACTION_LOAD_MORE);
 
-        setAddressBar(form.serializeFor(ACTION_DEEP_LINK));
+        if (activeDiscoveryQuery) {
+            setAddressBar(form.serializeQueryFor(activeDiscoveryQuery, ACTION_DEEP_LINK));
+        } else {
+            setAddressBar(form.serializeFor(ACTION_DEEP_LINK));
+        }
+        activeRequestQuery = null;
 
         trigger(ns.Events.SEARCH_END, [EVENT_SEARCH_TYPE_LOAD_MORE]);
         running = false;
@@ -208,14 +356,28 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         if (!running) {
             running = true;
 
-            if (isDiscoverySearch()) {
+            if (hasDiscoveryCommand()) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
-                discoverySearch();
-            } else if (form.submit(ACTION_SEARCH, true, processSearch)) {
-                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
+                if (getSearchPrompt()) {
+                    if (activeDiscoveryQuery && activeDiscoveryPrompt === getSearchPrompt()) {
+                        submitDiscoveryQuery(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
+                    } else {
+                        discoverySearch();
+                    }
+                } else {
+                    clearDiscoveryState();
+                    searchFailed(EVENT_SEARCH_TYPE_FULL, true);
+                }
             } else {
-                trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_FULL]);
-                running = false;
+                clearDiscoveryState();
+                hideDiscoveryQuery();
+                if (form.submit(ACTION_SEARCH, true, processSearch, function() {
+                    searchFailed(EVENT_SEARCH_TYPE_FULL, false);
+                })) {
+                    trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
+                } else {
+                    searchFailed(EVENT_SEARCH_TYPE_FULL, false);
+                }
             }
         }
     }
@@ -226,11 +388,15 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (form.submit(ACTION_LOAD_MORE, false, processLoadMore)) {
+            if (activeDiscoveryQuery) {
+                submitDiscoveryQuery(ACTION_LOAD_MORE, processLoadMore, EVENT_SEARCH_TYPE_LOAD_MORE);
+                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_LOAD_MORE]);
+            } else if (form.submit(ACTION_LOAD_MORE, false, processLoadMore, function() {
+                searchFailed(EVENT_SEARCH_TYPE_LOAD_MORE, false);
+            })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_LOAD_MORE]);
             } else {
-                trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_LOAD_MORE]);
-                running = false;
+                searchFailed(EVENT_SEARCH_TYPE_LOAD_MORE, false);
             }
         }
     }
@@ -241,26 +407,36 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (form.submit(ACTION_SORT, false, processSearch)) {
+            if (activeDiscoveryQuery) {
+                submitDiscoveryQuery(ACTION_SORT, processSearch, EVENT_SEARCH_TYPE_FULL);
+                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
+            } else if (form.submit(ACTION_SORT, false, processSearch, function() {
+                searchFailed(EVENT_SEARCH_TYPE_FULL, false);
+            })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
             } else {
-                trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_FULL]);
-                running = false;
+                searchFailed(EVENT_SEARCH_TYPE_FULL, false);
             }
         }
     }
 
     function switchLayout(e) {
-        e.preventDefault();
+        if (e) {
+            e.preventDefault();
+        }
         if (!running) {
             running = true;
 
             ns.Data.val("layout", $(this).val());
-            if (form.submit(ACTION_SWITCH_LAYOUT, false, processSearch)) {
+            if (activeDiscoveryQuery) {
+                submitDiscoveryQuery(ACTION_SWITCH_LAYOUT, processSearch, EVENT_SEARCH_TYPE_FULL);
+                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
+            } else if (form.submit(ACTION_SWITCH_LAYOUT, false, processSearch, function() {
+                searchFailed(EVENT_SEARCH_TYPE_FULL, false);
+            })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
             } else {
-                trigger(ns.Events.SEARCH_INVALID, [EVENT_SEARCH_TYPE_FULL]);
-                running = false;
+                searchFailed(EVENT_SEARCH_TYPE_FULL, false);
             }
         }
     }
@@ -280,6 +456,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         $("body").on("change", ns.Elements.selector("sort"), sortResults);
         $("body").on("click", ns.Elements.selector("switch-layout"), switchLayout);
 
+        $("body").on("input change", "[for][form=\"" + formId + "\"]", markDiscoveryPredicateDirty);
         $("body").on("change", "[data-asset-share-search-on='change']", search);
         $("body").on("click", "[data-asset-share-search-on='click']", search);
 
