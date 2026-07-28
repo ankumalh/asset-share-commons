@@ -1,5 +1,47 @@
 # Component Style Guide
 
+## Discovery Agent UI Contract
+
+Search predicates that participate in discovery-agent query reconciliation must expose a stable predicate ID that links their QueryBuilder backing fields to their user-editable inputs.
+
+* Add `data-asset-share-predicate-id="<predicateId>"` to at least one QueryBuilder backing field. Add it to every backing field that must be retained when the user changes that predicate.
+* Add `for="<predicateId>"` to each related `input`, `select`, or `textarea` that displays or edits the predicate value.
+* Set the same `form` attribute on the backing fields and related inputs. The value must match the Asset Share search form ID.
+* Property-based predicates must include a backing field whose name ends in `.property`. Its value is the JCR property path used to correlate agent-generated parameters with the rendered component. A leading `./` is optional.
+* Path-based predicates must use related input names whose final segment is `path` or a numbered QueryBuilder path such as `0_path`. Path predicates still need a backing field carrying `data-asset-share-predicate-id`, typically the group's `p.or` field.
+
+Property predicate example:
+
+```html
+<input type="hidden"
+  name="3_group.propertyvalues.property"
+  value="jcr:content/metadata/dc:format"
+  form="asset-share-commons__form-id__1"
+  data-asset-share-predicate-id="format"/>
+<input type="checkbox"
+  name="3_group.propertyvalues.0_values"
+  value="image/jpeg"
+  form="asset-share-commons__form-id__1"
+  for="format"/>
+```
+
+Path predicate example:
+
+```html
+<input type="hidden"
+  name="4_group.p.or"
+  value="true"
+  form="asset-share-commons__form-id__1"
+  data-asset-share-predicate-id="location"/>
+<input type="checkbox"
+  name="4_group.0_path"
+  value="/content/dam/products"
+  form="asset-share-commons__form-id__1"
+  for="location"/>
+```
+
+Discovery reconciliation matches property predicates by normalized JCR property path, not by QueryBuilder group number. It updates only values represented by existing controls and does not create options or inputs for agent-generated values. Predicates that are not represented in the UI remain in the submitted discovery query until a matching UI predicate is edited.
+
 ## cq:Component
 * Node names are lowercase and hyphenated
 * *Hyphens represent spaces; The English language should be used to determine where spaces occur (ie. search-bar is correct; searchbar is not.)*
