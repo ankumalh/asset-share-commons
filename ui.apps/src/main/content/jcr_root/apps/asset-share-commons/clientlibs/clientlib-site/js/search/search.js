@@ -303,53 +303,143 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         });
     }
 
-    function getRailPredicateInputs() {
+    function canonicalizePredicateSuffix(suffix) {
+        // Checkbox options are indexed ("0_value", "1_value", ...) while radio/toggle/slider
+        // options and daterange bounds share a single un-indexed suffix ("value", "lowerBound").
+        // Stripping the index lets both shapes be looked up the same way.
+        return suffix.replace(/^\d+_/, "");
+    }
+
+    function normalizePropertyPath(path) {
+        // Rail predicates are commonly authored with a "./" relative-path prefix
+        // (e.g. "./jcr:content/metadata/cq:tags"); discovery agents typically don't
+        // include it. Compare paths with it stripped from both sides.
+        return (path || "").replace(/^\.\//, "");
+    }
+
+    // Groups a discovery query's flat params by the property/JCR-property each one targets.
+    // The discovery agent generates its own top-level QueryBuilder group numbering
+    // (e.g. "1_property", "2_daterange"), which will not match the "<N>_group.<predicate>"
+    // names the rail's actual rendered inputs use - so predicates are correlated by the
+    // property path they target, not by the literal QueryBuilder param name.
+    function getDiscoveryPropertyGroups(query) {
+        var fields = form.deserialize(query).getAll(),
+            groups = [];
+
+        fields.forEach(function(field) {
+            // "daterange"/"relativedaterange" and "propertyvalues" predicates all use an
+            // explicit "<prefix>.property" key (unlike the bare "<prefix>_property" form
+            // handled below), so their sibling keys ("lowerBound", "operation", "0_values", ...)
+            // live under a namespace of "<prefix>." - i.e. with the trailing ".property" stripped.
+            var namespacedMatch = /^(.*(?:daterange|propertyvalues))\.property$/.exec(field.name),
+                lastSegment;
+
+            if (namespacedMatch) {
+                groups.push({propertyPath: field.value, namespace: namespacedMatch[1] + ".", values: {}});
+                return;
+            }
+
+            lastSegment = field.name.substring(field.name.lastIndexOf(".") + 1);
+
+            if (/^(\d+_)?property$/.test(lastSegment)) {
+                groups.push({propertyPath: field.value, namespace: field.name + ".", values: {}});
+            }
+        });
+
+        groups.forEach(function(group) {
+            fields.forEach(function(field) {
+                var suffix,
+                    canonicalKey;
+
+                if (field.name.indexOf(group.namespace) !== 0) {
+                    return;
+                }
+
+                suffix = field.name.substring(group.namespace.length);
+                canonicalKey = canonicalizePredicateSuffix(suffix);
+
+                if (!group.values[canonicalKey]) {
+                    group.values[canonicalKey] = [];
+                }
+                group.values[canonicalKey].push(field.value);
+            });
+        });
+
+        return groups;
+    }
+
+    function getRailPredicateIds() {
         var formId = form.id(),
-            inputs = $(),
-            seenPredicateIds = {};
+            ids = [],
+            seen = {};
 
         $("[data-asset-share-predicate-id][form=\"" + formId + "\"]").each(function() {
             var predicateId = ns.Data.attr($(this), "predicate-id");
 
-            if (!predicateId || seenPredicateIds[predicateId]) {
-                return;
+            if (predicateId && !seen[predicateId]) {
+                seen[predicateId] = true;
+                ids.push(predicateId);
             }
-            seenPredicateIds[predicateId] = true;
-
-            inputs = inputs.add($(":input[for=\"" + predicateId + "\"][form=\"" + formId + "\"]"));
         });
 
-        return inputs;
+        return ids;
+    }
+
+    function getRailPredicatePropertyPath(predicateId) {
+        var formId = form.id(),
+            propertyField = $("[data-asset-share-predicate-id=\"" + predicateId + "\"][form=\"" + formId + "\"]")
+                .filter(function() {
+                    var name = $(this).attr("name"),
+                        lastSegment = name.substring(name.lastIndexOf(".") + 1);
+
+                    return /^(\d+_)?property$/.test(lastSegment);
+                })
+                .first();
+
+        return propertyField.length ? propertyField.val() : null;
     }
 
     function applyDiscoveryQueryToRail(query) {
-        var lookup = {};
-
-        form.deserialize(query).getAll().forEach(function(field) {
-            if (!lookup[field.name]) {
-                lookup[field.name] = [];
-            }
-            lookup[field.name].push(field.value);
-        });
+        var discoveryGroups = getDiscoveryPropertyGroups(query),
+            formId = form.id();
 
         // Suppress the auto-search "change"/"click" bindings (search.js:registerEvents) while
         // these rail inputs are set programmatically, since many predicates auto-submit on change.
         applyingRailSelections = true;
 
         try {
-            getRailPredicateInputs().each(function() {
-                var input = $(this),
-                    values = lookup[input.attr("name")] || [];
+            getRailPredicateIds().forEach(function(predicateId) {
+                var propertyPath = getRailPredicatePropertyPath(predicateId),
+                    matchedGroup,
+                    relatedInputs;
 
-                if (input.is(":checkbox, :radio")) {
-                    input.prop("checked", values.indexOf(input.val()) > -1);
-                } else if (input.is("select") && input.prop("multiple")) {
-                    input.find("option").each(function() {
-                        $(this).prop("selected", values.indexOf($(this).val()) > -1);
-                    });
-                } else {
-                    input.val(values.length ? values[0] : "");
+                if (propertyPath === null) {
+                    // No correlatable property path (e.g. path/freeform components); leave as-is.
+                    return;
                 }
+
+                matchedGroup = discoveryGroups.filter(function(group) {
+                    return normalizePropertyPath(group.propertyPath) === normalizePropertyPath(propertyPath);
+                })[0];
+
+                relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + formId + "\"]");
+
+                relatedInputs.each(function() {
+                    var input = $(this),
+                        name = input.attr("name"),
+                        canonicalKey = canonicalizePredicateSuffix(name.substring(name.lastIndexOf(".") + 1)),
+                        values = (matchedGroup && matchedGroup.values[canonicalKey]) || [];
+
+                    if (input.is(":checkbox, :radio")) {
+                        input.prop("checked", values.indexOf(input.val()) > -1);
+                    } else if (input.is("select") && input.prop("multiple")) {
+                        input.find("option").each(function() {
+                            $(this).prop("selected", values.indexOf($(this).val()) > -1);
+                        });
+                    } else {
+                        input.val(values.length ? values[0] : "");
+                    }
+                });
             });
         } finally {
             applyingRailSelections = false;
@@ -539,7 +629,9 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         search: search,
         sortResults: sortResults,
         switchLayout: switchLayout,
-        form: getForm
+        form: getForm,
+        // Exposed for unit testing the discovery query <-> rail correlation logic.
+        applyDiscoveryQueryToRail: applyDiscoveryQueryToRail
     };
 
 }(window,

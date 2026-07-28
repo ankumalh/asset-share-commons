@@ -35,7 +35,8 @@
 		        ${properties['buttonLabel'] @ i18n}
 		</button>
 	</div>
-	<div class="ui message asset-share-commons__discovery-query hidden"
+	<div data-sly-test="${properties['discoveryDebug']}"
+		 class="ui message asset-share-commons__discovery-query hidden"
 		 data-asset-share-id="discovery-query"
 		 data-asset-share-query-title="${'Discovery query' @ i18n}"
 		 data-asset-share-error-title="${'Discovery search unavailable' @ i18n}"
