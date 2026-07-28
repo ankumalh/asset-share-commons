@@ -39,4 +39,58 @@
             word-break: break-word;
         }
     }
+
+    .asset-share-commons__discovery-search {
+        position: relative;
+    }
+
+    .asset-share-commons__discovery-command-menu {
+        background: #fff;
+        border: 1px solid rgba(34, 36, 38, .15);
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(34, 36, 38, .12);
+        left: 0;
+        margin-top: .35rem;
+        max-width: 28rem;
+        min-width: 18rem;
+        padding: .35rem;
+        position: absolute;
+        top: 100%;
+        width: 100%;
+        z-index: 20;
+    }
+
+    .asset-share-commons__discovery-command-option {
+        align-items: center;
+        background: #edf4ff;
+        border: 0;
+        border-radius: 6px;
+        color: #2185d0;
+        cursor: pointer;
+        display: flex;
+        font: inherit;
+        gap: .7rem;
+        padding: .65rem .8rem;
+        text-align: left;
+        width: 100%;
+    }
+
+    .asset-share-commons__discovery-command-option:hover,
+    .asset-share-commons__discovery-command-option:focus {
+        background: #e4efff;
+        outline: 0;
+    }
+
+    .asset-share-commons__discovery-command-name {
+        flex: 1 1 auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .asset-share-commons__discovery-command-type {
+        color: #6d8fd7;
+        font-size: .85em;
+        text-transform: uppercase;
+    }
 }

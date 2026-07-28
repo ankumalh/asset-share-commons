@@ -1,0 +1,6 @@
+{
+  "agent.endpoint": "https://5e7f-130-248-127-34.ngrok-free.app/transform-query",
+  "agent.headers": [
+    "ngrok-skip-browser-warning: true"
+  ]
+}

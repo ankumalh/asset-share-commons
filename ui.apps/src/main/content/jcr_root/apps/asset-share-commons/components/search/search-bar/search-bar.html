@@ -20,7 +20,7 @@
 	 data-sly-use.predicate="com.adobe.aem.commons.assetshare.components.predicates.FulltextPredicate"
 	 data-sly-test.ready="${predicate.isReady}">
 
-	<div class="ui fluid big left icon input ${properties['hideButton'] ? '' : 'action'}"
+	<div class="ui fluid big left icon input asset-share-commons__discovery-search ${properties['hideButton'] ? '' : 'action'}"
 		 data-asset-share-id="discovery-search"
 		 data-asset-share-discovery-agent-endpoint="${properties['discoveryAgentEndpoint'] ? properties['discoveryAgentEndpoint'] : '/bin/asset-share-commons/discovery'}">
 		<input type="${predicate.type}"
@@ -34,15 +34,31 @@
 				form="${predicate.formId}">
 		        ${properties['buttonLabel'] @ i18n}
 		</button>
+		<div class="asset-share-commons__discovery-command-menu hidden"
+			 data-asset-share-id="discovery-command-menu"
+			 role="listbox"
+			 aria-label="${'Discovery commands' @ i18n}">
+			<button class="asset-share-commons__discovery-command-option"
+				 type="button"
+				 data-asset-share-id="discovery-command-option"
+				 role="option"
+				 aria-selected="true"
+				 tabindex="-1">
+				<i class="puzzle piece icon" aria-hidden="true"></i>
+				<span class="asset-share-commons__discovery-command-name">/discovery</span>
+				<span class="asset-share-commons__discovery-command-type">${'AGENT' @ i18n}</span>
+			</button>
+		</div>
 	</div>
 	<div class="ui message asset-share-commons__discovery-query hidden"
 		 data-asset-share-id="discovery-query"
-		 data-asset-share-query-title="${'Discovery query' @ i18n}"
+		 data-asset-share-query-title="${'Discovery constraints' @ i18n}"
+		 data-asset-share-residual-title="${'Discovery constraints' @ i18n}"
 		 data-asset-share-error-title="${'Discovery search unavailable' @ i18n}"
 		 data-asset-share-error-message="${'The discovery search could not be completed. Please try again.' @ i18n}"
 		 aria-live="polite">
-		<div class="header" data-asset-share-id="discovery-query-title">${'Discovery query' @ i18n}</div>
-		<pre data-asset-share-id="discovery-query-output"></pre>
+		<div class="header" data-asset-share-id="discovery-query-title">${'Discovery constraints' @ i18n}</div>
+		<div class="ui list" data-asset-share-id="discovery-query-output"></div>
 	</div>
 
 </sly>

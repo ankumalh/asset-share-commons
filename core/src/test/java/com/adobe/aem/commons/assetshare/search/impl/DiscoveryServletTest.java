@@ -85,31 +85,33 @@ public class DiscoveryServletTest {
     @Test
     public void proxiesDiscoveryRequestAndResponse() throws IOException {
         final StringEntity entity = new StringEntity(
-                "{\"query\":{\"type\":\"dam:Asset\"}}", ContentType.APPLICATION_JSON);
+                "{\"version\":2,\"query\":{\"fulltext\":null,\"path\":null},\"controlUpdates\":[]}",
+                ContentType.APPLICATION_JSON);
         when(agentResponse.getEntity()).thenReturn(entity);
         when(agentResponse.getStatusLine()).thenReturn(
                 new BasicStatusLine(new ProtocolVersion("HTTP", 1, 1), 200, "OK"));
         when(agentResponse.getFirstHeader(HttpHeaders.CONTENT_TYPE)).thenReturn(entity.getContentType());
         context.request().addRequestParameter("prompt", "find brand products");
-        context.request().addRequestParameter("context", "{\"path\":\"/content/dam\"}");
+        context.request().addRequestParameter("context", "{\"query\":{\"path\":\"/content/dam\"},\"controls\":[]}");
 
         servlet.doPost(context.request(), context.response());
 
         assertEquals(SlingHttpServletResponse.SC_OK, context.response().getStatus());
         assertEquals("application/json; charset=UTF-8", context.response().getContentType());
-        assertEquals("{\"query\":{\"type\":\"dam:Asset\"}}", context.response().getOutputAsString());
+        assertEquals("{\"version\":2,\"query\":{\"fulltext\":null,\"path\":null},\"controlUpdates\":[]}",
+                context.response().getOutputAsString());
 
         final ArgumentCaptor<HttpPost> requestCaptor = ArgumentCaptor.forClass(HttpPost.class);
         verify(httpClient).execute(requestCaptor.capture());
         assertEquals("Bearer token", requestCaptor.getValue().getFirstHeader(HttpHeaders.AUTHORIZATION).getValue());
         assertEquals(
-                ContentType.TEXT_PLAIN.getMimeType(),
+                ContentType.APPLICATION_JSON.getMimeType(),
                 requestCaptor.getValue().getFirstHeader(HttpHeaders.ACCEPT).getValue());
         assertEquals(
                 "true",
                 requestCaptor.getValue().getFirstHeader("ngrok-skip-browser-warning").getValue());
         assertEquals(
-                "{\"prompt\":\"find brand products\",\"context\":{\"path\":\"/content/dam\"}}",
+                "{\"version\":2,\"prompt\":\"find brand products\",\"context\":{\"query\":{\"path\":\"/content/dam\"},\"controls\":[]}}",
                 EntityUtils.toString(requestCaptor.getValue().getEntity()));
         assertEquals(
                 ContentType.APPLICATION_JSON.getMimeType(),

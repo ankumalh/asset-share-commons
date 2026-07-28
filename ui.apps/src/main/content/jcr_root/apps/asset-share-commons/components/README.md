@@ -2,13 +2,19 @@
 
 ## Discovery Agent UI Contract
 
-Search predicates that participate in discovery-agent query reconciliation must expose a stable predicate ID that links their QueryBuilder backing fields to their user-editable inputs.
+Search predicates that participate in discovery-agent structured controls must expose a stable predicate ID that links internal QueryBuilder backing fields to user-editable controls. ASC sends only logical control descriptors to the agent; it never sends QueryBuilder parameter names, group IDs, property paths, delimiters, or hidden predicate details.
 
-* Add `data-asset-share-predicate-id="<predicateId>"` to at least one QueryBuilder backing field. Add it to every backing field that must be retained when the user changes that predicate.
+* Add `data-asset-share-predicate-id="<predicateId>"` to at least one QueryBuilder backing field.
 * Add `for="<predicateId>"` to each related `input`, `select`, or `textarea` that displays or edits the predicate value.
 * Set the same `form` attribute on the backing fields and related inputs. The value must match the Asset Share search form ID.
-* Property-based predicates must include a backing field whose name ends in `.property`. Its value is the JCR property path used to correlate agent-generated parameters with the rendered component. A leading `./` is optional.
-* Path-based predicates must use related input names whose final segment is `path` or a numbered QueryBuilder path such as `0_path`. Path predicates still need a backing field carrying `data-asset-share-predicate-id`, typically the group's `p.or` field.
+* Property-backed checkbox, radio, and select controls are inferred as `choice`. Radio and single select controls use `one` cardinality; checkboxes and multiple selects use `many`.
+* Freeform text and textarea controls are inferred as `text`. Logical `values` are split from the visible value using the component's internal delimiter backing field. ASC exposes HTML constraints such as `required`, `minlength`, `maxlength`, `pattern`, and `data-asset-share-max-values`.
+* Text inputs whose names end in `lowerBound` or `upperBound` are inferred as `date-range`. The agent receives and returns UI date strings (`YYYY-MM-DD`) before ASC applies QueryBuilder end-of-day conversion.
+* Choice controls whose related input name ends in `lowerBound` are inferred as `relative-date`; option values such as `-1M` remain opaque.
+* Related inputs whose final name segment is `path` or a numbered QueryBuilder path such as `0_path` are inferred as `path`. Authored path controls can be `one` or `many`, but the residual discovery `query.path` is always singular.
+* Tags inherit the same `choice` behavior as property controls.
+* Options are a closed vocabulary. ASC sends each option's `value`, localized `label`, and `disabled` state. The agent may reason from labels, but ASC accepts back only exact enabled values. Already-selected disabled values are preserved only by omitting that control update.
+* Unsupported or mixed input shapes are omitted from agent-writable `controls`; they are still serialized normally by the form and are not exposed as raw QueryBuilder fields.
 
 Property predicate example:
 
@@ -40,7 +46,7 @@ Path predicate example:
   for="location"/>
 ```
 
-Discovery reconciliation matches property predicates by normalized JCR property path, not by QueryBuilder group number. It updates only values represented by existing controls and does not create options or inputs for agent-generated values. Predicates that are not represented in the UI remain in the submitted discovery query until a matching UI predicate is edited.
+Discovery applies complete replacement state to existing controls by stable predicate ID. It does not create options or inputs for agent-generated values, and the agent cannot set sort, pagination, layout, type, hidden predicates, or arbitrary QueryBuilder parameters.
 
 ## cq:Component
 * Node names are lowercase and hyphenated

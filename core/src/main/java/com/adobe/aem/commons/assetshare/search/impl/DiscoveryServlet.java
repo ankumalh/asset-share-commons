@@ -120,7 +120,7 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         try {
             final HttpPost agentRequest = new HttpPost(endpoint);
             agentRequest.setEntity(new StringEntity(toDiscoveryRequestJson(prompt, context), ContentType.APPLICATION_JSON));
-            agentRequest.setHeader(HttpHeaders.ACCEPT, ContentType.TEXT_PLAIN.getMimeType());
+            agentRequest.setHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType());
             applyConfiguredHeaders(agentRequest);
 
             final String authorization = getAuthorizationHeaderValue();
@@ -176,7 +176,7 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
     }
 
     private String toDiscoveryRequestJson(final String prompt, final String context) {
-        return "{\"prompt\":" + toJsonString(prompt) + ",\"context\":" + context + "}";
+        return "{\"version\":2,\"prompt\":" + toJsonString(prompt) + ",\"context\":" + context + "}";
     }
 
     private String toJsonString(final String value) {

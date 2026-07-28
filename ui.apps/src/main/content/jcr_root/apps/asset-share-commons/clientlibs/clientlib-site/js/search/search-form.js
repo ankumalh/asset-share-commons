@@ -5,18 +5,9 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
-/*global es6: true, $: false, AssetShare: false, window: false, document: false*/
+/*global es6: true, $: false, AssetShare: false */
 
 AssetShare.Search.Form = function (ns) {
     "use strict";
@@ -24,7 +15,7 @@ AssetShare.Search.Form = function (ns) {
     var url,
         mode,
         formData,
-        applyingDiscoveryPredicates = false;
+        applyingDiscoveryControls = false;
 
     function getId() {
        return "asset-share-commons__form-id__1";
@@ -34,7 +25,6 @@ AssetShare.Search.Form = function (ns) {
         return $('form[id="' + getId() + '"]');
     }
 
-    /** Operations **/
     function getUrl() {
         return url;
     }
@@ -43,62 +33,32 @@ AssetShare.Search.Form = function (ns) {
         formData = new ns.FormData(_htmlForm());
     }
 
-    /** Getter Or Setter Methods **/
-
-    /**
-     * Cleaning the form is performed so NOOP query builder parameters are not passed.
-     *
-     * This works by iterating over all form inputs.
-     * - If the the form input has a `data-asset-share-predicate-id` then..
-     * -- Search all inputs to see if
-     * ---- a 'related' Input exists with with a for="<predicateId>" AND that related Input has SOME value.
-     * ---- If it does, add the original input to the form, else dont.
-     *
-     *
-     * @param formData
-     * @returns {AssetShare.FormData}
-     */
-    function clean(formData) {
+    function clean(sourceFormData) {
         var cleanFormData = new ns.FormData();
 
-        // Use formData to auto-collect the super-set of eligible inputs to clean.
-        formData.forEach(function (inputName, inputValue) {
-
-            // Only look at input fields that belong to the form via the form attribute.
+        sourceFormData.forEach(function (inputName, inputValue) {
             var candidateInputs = $("[name=\"" + inputName + "\"][form=\"" + getId() + "\"]");
 
-            // We max have more than 1 input with the same name; for example in radio/toggle/sliders
             candidateInputs.each(function() {
-
                 var candidateInput = $(this),
                     candidatePredicateId = ns.Data.attr(candidateInput, "predicate-id") || null,
                     candidateInputAdded = false;
 
                if (candidatePredicateId) {
                     $("[for=\"" + candidatePredicateId + "\"]").each(function (index, relatedInput) {
-                        // For each 'value-full input' that is associated to this predicateId...
                         if (!candidateInputAdded) {
-                            // If this candidate has NOT found a supporting "for" input then keep looking!
-                            // Check to see if it exists in formData
-
                             var relativeInputName = $(relatedInput).attr("name"),
-                                relatedInputValue = formData.get(relativeInputName);
+                                relatedInputValue = sourceFormData.get(relativeInputName);
                             if (relatedInputValue) {
-                                // Add to the clean form
                                 if (cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
-                                    // Never add the same exact inputName=inputValue twice
                                     cleanFormData.add(inputName, inputValue);
                                 }
                                 candidateInputAdded = true;
                             }
                         }
                     });
-                } else {
-                    // No predicateId, so this is a stand-alone field and always add it unless its already exists
-                   if (inputValue !== '' && cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
-                       // Never add the same exact inputName=inputValue twice
-                       cleanFormData.add(inputName, inputValue);
-                   }
+                } else if (inputValue !== '' && cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
+                   cleanFormData.add(inputName, inputValue);
                 }
             });
         });
@@ -106,23 +66,31 @@ AssetShare.Search.Form = function (ns) {
         return cleanFormData;
     }
 
-    function buildFormData(formData, event) {
-        var clone = clean(formData.clone());
-        clone = _adjustFormData(clone);
+    function removeAll(formDataToUpdate, name) {
+        while (typeof formDataToUpdate.get(name) !== "undefined") {
+            formDataToUpdate.remove(name);
+        }
+    }
 
-        // Clear all search data marked as events; they will be re-added as needed below
+    function applyActionFields(targetFormData, event) {
         $("[data-asset-share-search-actions]").each(function () {
-            clone.remove($(this).attr('name'));
+            removeAll(targetFormData, $(this).attr("name"));
         });
 
-        // Add all search data that apply to all events or this specific event
-        $("[data-asset-share-search-actions*=\"all\"],[data-asset-share-search-actions*=\"" + event + "\"]").each(function (index, element) {
-            if ($.trim($(element).val()) !== '') {
-                clone.set($(this).attr('name'), $(this).val());
+        $("[data-asset-share-search-actions*=\"all\"],[data-asset-share-search-actions*=\"" + event + "\"]").each(function () {
+            if ($.trim($(this).val()) !== "") {
+                targetFormData.set($(this).attr("name"), $(this).val());
             }
         });
 
-        return clone;
+        return targetFormData;
+    }
+
+    function buildFormData(sourceFormData, event) {
+        var clone = clean(sourceFormData.clone());
+
+        clone = _adjustFormData(clone);
+        return applyActionFields(clone, event);
     }
 
     function serializeFor(event, resetForm) {
@@ -163,69 +131,8 @@ AssetShare.Search.Form = function (ns) {
         return deserializedFormData;
     }
 
-    function removeAll(formDataToUpdate, name) {
-        while (typeof formDataToUpdate.get(name) !== "undefined") {
-            formDataToUpdate.remove(name);
-        }
-    }
-
     function serializeQueryFor(query, event) {
-        var queryFormData = deserialize(query);
-
-        $("[data-asset-share-search-actions]").each(function() {
-            removeAll(queryFormData, $(this).attr("name"));
-        });
-
-        $("[data-asset-share-search-actions*=\"all\"],[data-asset-share-search-actions*=\"" + event + "\"]").each(function() {
-            if ($.trim($(this).val()) !== "") {
-                queryFormData.set($(this).attr("name"), $(this).val());
-            }
-        });
-
-        return queryFormData.serialize();
-    }
-
-    function applyDiscoverySort(query) {
-        var sortParameterNames = ["orderby", "orderby.sort", "orderby.case"],
-            sortValues = {};
-
-        ns.Search.DiscoveryQuery.parse(query).forEach(function(parameter) {
-            if (sortParameterNames.indexOf(parameter.name) > -1) {
-                sortValues[parameter.name] = parameter.value;
-            }
-        });
-
-        sortParameterNames.forEach(function(name) {
-            var value,
-                inputs;
-
-            if (!Object.prototype.hasOwnProperty.call(sortValues, name)) {
-                return;
-            }
-
-            value = sortValues[name];
-            inputs = $("[name=\"" + name + "\"][form=\"" + getId() + "\"]");
-
-            inputs.each(function() {
-                var input = $(this),
-                    dropdown = input.closest(".ui.dropdown"),
-                    matchingItem;
-
-                if (dropdown.length) {
-                    matchingItem = dropdown.find(".item").filter(function() {
-                        return $(this).attr("data-value") === value;
-                    }).first();
-
-                    if (matchingItem.length && typeof dropdown.dropdown === "function") {
-                        dropdown.dropdown("set selected", value);
-                    } else if (typeof dropdown.dropdown === "function") {
-                        dropdown.dropdown("clear");
-                    }
-                }
-
-                input.val(value);
-            });
-        });
+        return applyActionFields(deserialize(query), event).serialize();
     }
 
     function isPathInput(input) {
@@ -235,193 +142,413 @@ AssetShare.Search.Form = function (ns) {
         return /^(?:\d+_)?path$/.test(segments[segments.length - 1]);
     }
 
-    function getMatchingOptionValues(input, generatedValues) {
+    function getInputLabel(input) {
+        var inputElement = $(input),
+            label;
+
+        if (inputElement.attr("id")) {
+            label = $("label[for=\"" + inputElement.attr("id") + "\"]").first().text();
+        }
+
+        if (!label) {
+            label = inputElement.closest(".checkbox").find("label").first().text();
+        }
+
+        return $.trim(label || "");
+    }
+
+    function getPredicateTitle(predicateId, relatedInputs) {
+        var title = relatedInputs.closest(".content").prev(".title").first().text();
+
+        if (!title) {
+            title = relatedInputs.closest(".accordion").find(".title").first().text();
+        }
+
+        return $.trim(title || predicateId).replace(/\s+/g, " ");
+    }
+
+    function getDelimiter(predicateFields) {
+        var delimiterField = predicateFields.filter(function() {
+            return /_delimiter$/.test($(this).attr("name") || "");
+        }).first();
+
+        return delimiterField.length ? delimiterField.val() : ",";
+    }
+
+    function splitValues(value, delimiter) {
+        return (value || "").split(delimiter || ",").map(function(item) {
+            return $.trim(item);
+        }).filter(function(item, index, values) {
+            return item && values.indexOf(item) === index;
+        });
+    }
+
+    function readChoiceValues(relatedInputs) {
+        var values = [];
+
+        relatedInputs.each(function(index, input) {
+            var inputElement = $(input),
+                value;
+
+            if (inputElement.is("select")) {
+                value = inputElement.val();
+                if (Array.isArray(value)) {
+                    values = values.concat(value.filter(Boolean));
+                } else if (value) {
+                    values.push(value);
+                }
+            } else if (inputElement.is(":checkbox,:radio") && inputElement.is(":checked")) {
+                values.push(inputElement.val());
+            }
+        });
+
+        return values.filter(function(value, index) {
+            return values.indexOf(value) === index;
+        });
+    }
+
+    function getPredicateOptions(relatedInputs) {
+        var options = [];
+
+        relatedInputs.each(function(index, input) {
+            var inputElement = $(input),
+                type = inputElement.attr("type") || input.tagName.toLowerCase();
+
+            if (inputElement.is("select")) {
+                inputElement.find("option").each(function(optionIndex, option) {
+                    var optionElement = $(option);
+
+                    if ($.trim(optionElement.val()) !== "") {
+                        options.push({
+                            value: optionElement.val(),
+                            label: $.trim(optionElement.text()).replace(/\s+/g, " "),
+                            disabled: optionElement.is(":disabled")
+                        });
+                    }
+                });
+            } else if (type === "checkbox" || type === "radio") {
+                options.push({
+                    value: inputElement.val(),
+                    label: getInputLabel(input),
+                    disabled: inputElement.is(":disabled")
+                });
+            }
+        });
+
+        return options;
+    }
+
+    function readHtmlConstraints(input, delimiter) {
+        var constraints = {},
+            maxValues = input.attr("data-asset-share-max-values");
+
+        if (input.attr("required")) {
+            constraints.required = true;
+        }
+        if (input.attr("minlength")) {
+            constraints.minLength = parseInt(input.attr("minlength"), 10);
+        }
+        if (input.attr("maxlength")) {
+            constraints.maxLength = parseInt(input.attr("maxlength"), 10);
+        }
+        if (input.attr("pattern")) {
+            constraints.pattern = input.attr("pattern");
+        }
+        if (maxValues) {
+            constraints.maxValues = parseInt(maxValues, 10);
+        }
+        if (delimiter) {
+            constraints.delimited = true;
+        }
+
+        return constraints;
+    }
+
+    function controlKind(relatedInputs) {
+        var pathInputs = relatedInputs.filter(function() {
+                return isPathInput($(this));
+            }),
+            lowerInputs = relatedInputs.filter(function() {
+                return /\.lowerBound$/.test($(this).attr("name") || "");
+            }),
+            upperInputs = relatedInputs.filter(function() {
+                return /\.upperBound$/.test($(this).attr("name") || "");
+            }),
+            choiceInputs = relatedInputs.filter(function() {
+                return $(this).is("select,:checkbox,:radio");
+            }),
+            textInputs = relatedInputs.filter(function() {
+                return $(this).is("input,textarea") && !$(this).is(":checkbox,:radio");
+            });
+
+        if (pathInputs.length && choiceInputs.length === pathInputs.length) {
+            return "path";
+        }
+        if (lowerInputs.length && !lowerInputs.first().is("select,:checkbox,:radio")) {
+            return "date-range";
+        }
+        if (lowerInputs.length && choiceInputs.length === relatedInputs.length) {
+            return "relative-date";
+        }
+        if (choiceInputs.length === relatedInputs.length && relatedInputs.length) {
+            return "choice";
+        }
+        if (textInputs.length === relatedInputs.length && textInputs.length === 1 && !upperInputs.length) {
+            return "text";
+        }
+
+        return null;
+    }
+
+    function cardinalityFor(kind, relatedInputs) {
+        var first = relatedInputs.first();
+
+        if (kind === "text" || kind === "date-range") {
+            return null;
+        }
+        if (first.is(":radio")) {
+            return "one";
+        }
+        if (first.is("select")) {
+            return first.prop("multiple") ? "many" : "one";
+        }
+        return "many";
+    }
+
+    function descriptorFor(predicateId) {
+        var predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
+                "\"][form=\"" + getId() + "\"]"),
+            relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]"),
+            kind = controlKind(relatedInputs),
+            descriptor,
+            delimiter,
+            textInput,
+            lowerInput,
+            upperInput;
+
+        if (!kind) {
+            return null;
+        }
+
+        descriptor = {
+            id: predicateId,
+            title: getPredicateTitle(predicateId, relatedInputs),
+            kind: kind
+        };
+
+        if (kind === "choice" || kind === "path" || kind === "relative-date") {
+            descriptor.cardinality = cardinalityFor(kind, relatedInputs);
+            descriptor.state = {values: readChoiceValues(relatedInputs)};
+            descriptor.options = getPredicateOptions(relatedInputs);
+        } else if (kind === "text") {
+            delimiter = getDelimiter(predicateFields);
+            textInput = relatedInputs.first();
+            descriptor.state = {values: splitValues(textInput.val(), delimiter)};
+            descriptor.constraints = readHtmlConstraints(textInput, delimiter);
+        } else if (kind === "date-range") {
+            lowerInput = relatedInputs.filter(function() {
+                return /\.lowerBound$/.test($(this).attr("name") || "");
+            }).first();
+            upperInput = relatedInputs.filter(function() {
+                return /\.upperBound$/.test($(this).attr("name") || "");
+            }).first();
+            descriptor.state = {
+                lowerBound: lowerInput.val() || null,
+                upperBound: upperInput.val() || null
+            };
+            descriptor.constraints = {format: "YYYY-MM-DD"};
+        }
+
+        return descriptor;
+    }
+
+    function getDiscoveryControls() {
+        var controls = [],
+            seen = {};
+
+        $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function(index, element) {
+            var predicateId = ns.Data.attr($(element), "predicate-id"),
+                descriptor;
+
+            if (!predicateId || seen[predicateId]) {
+                return;
+            }
+            seen[predicateId] = true;
+            descriptor = descriptorFor(predicateId);
+            if (descriptor) {
+                controls.push(descriptor);
+            }
+        });
+
+        return controls;
+    }
+
+    function getAllowedPathRoots() {
+        return $("[data-asset-share-discovery-allowed-path-root]").map(function() {
+            return $(this).attr("data-asset-share-discovery-allowed-path-root");
+        }).get().filter(Boolean);
+    }
+
+    function getResidualQueryFromForm(removeKeys) {
+        var current = buildFormData(formData, "search"),
+            fulltext = current.get("fulltext") || null,
+            path = current.get("path") || null;
+
+        removeKeys = removeKeys || [];
+        if (removeKeys.indexOf("fulltext") > -1 || /^\/discovery(?:\s|$)/.test($.trim(fulltext || ""))) {
+            fulltext = null;
+        }
+        if (removeKeys.indexOf("path") > -1) {
+            path = null;
+        }
+
+        return {
+            fulltext: fulltext,
+            path: path
+        };
+    }
+
+    function serializeDiscoveryContextFor(event, resetForm, removeKeys, residualQuery) {
+        var query;
+
+        if (resetForm) {
+            reset();
+        }
+
+        query = residualQuery || getResidualQueryFromForm(removeKeys);
+
+        return JSON.stringify({
+            query: {
+                fulltext: query.fulltext || null,
+                path: query.path || null,
+                allowedPathRoots: getAllowedPathRoots()
+            },
+            controls: getDiscoveryControls()
+        });
+    }
+
+    function getMatchingOptionValues(input, values) {
         var availableValues = input.find("option").map(function() {
             return $(this).val();
         }).get();
 
-        return generatedValues.filter(function(value) {
+        return values.filter(function(value) {
             return availableValues.indexOf(value) > -1;
         });
     }
 
-    function applyChoiceValues(input, generatedValues) {
-        var dropdown,
-            matchingValues;
+    function syncDropdown(input, values) {
+        var dropdown = input.closest(".ui.dropdown"),
+            selected = input.prop("multiple") ? values : values[0];
 
-        if (input.is("select")) {
-            matchingValues = getMatchingOptionValues(input, generatedValues);
-            input.val(input.prop("multiple") ? matchingValues : matchingValues[0] || "");
+        if (!dropdown.length || !dropdown.attr("data-asset-share-processed") ||
+                typeof dropdown.dropdown !== "function") {
+            return;
+        }
 
-            dropdown = input.closest(".ui.dropdown");
-            if (dropdown.length && dropdown.attr("data-asset-share-processed") &&
-                    typeof dropdown.dropdown === "function") {
-                dropdown.dropdown("clear");
-                if (matchingValues.length) {
-                    dropdown.dropdown(
-                        "set selected",
-                        input.prop("multiple") ? matchingValues : matchingValues[0]
-                    );
-                }
-            }
-        } else if (input.is(":checkbox,:radio")) {
-            input.prop("checked", generatedValues.indexOf(input.val()) > -1);
+        dropdown.dropdown("clear");
+        if (values.length) {
+            dropdown.dropdown("set selected", selected);
         }
     }
 
-    function applyPredicateValues(predicateFields, relatedInputs, predicate) {
-        var delimiterField = predicateFields.filter(function() {
-                return /_delimiter$/.test($(this).attr("name") || "");
-            }).first(),
-            delimiter = delimiterField.length ? delimiterField.val() : ",",
-            values = predicate ? predicate.values : [],
-            choiceValues;
+    function applyValuesState(relatedInputs, values) {
+        relatedInputs.each(function(index, input) {
+            var inputElement = $(input),
+                matchingValues;
 
-        relatedInputs.each(function() {
-            var input = $(this),
-                name = input.attr("name") || "";
-
-            if (input.is("select,:checkbox,:radio")) {
-                choiceValues = /\.lowerBound$/.test(name) && predicate &&
-                    predicate.lowerBound !== null ? [predicate.lowerBound] : values;
-                applyChoiceValues(input, choiceValues);
-            } else if (/\.lowerBound$/.test(name)) {
-                input.val(predicate && predicate.lowerBound || "");
-            } else if (/\.upperBound$/.test(name)) {
-                input.val(predicate && predicate.upperBound || "");
+            if (inputElement.is("select")) {
+                matchingValues = getMatchingOptionValues(inputElement, values);
+                inputElement.val(inputElement.prop("multiple") ? matchingValues : matchingValues[0] || "");
+                syncDropdown(inputElement, matchingValues);
+            } else if (inputElement.is(":checkbox,:radio")) {
+                inputElement.prop("checked", values.indexOf(inputElement.val()) > -1);
             } else {
-                input.val(values.join(delimiter));
+                inputElement.val(values.join(getDelimiter(
+                    $("[data-asset-share-predicate-id=\"" + inputElement.attr("for") +
+                    "\"][form=\"" + getId() + "\"]")
+                )));
             }
         });
     }
 
-    function applyDiscoveryPredicates(query) {
-        var processedPredicateIds = {};
-
-        applyingDiscoveryPredicates = true;
+    function applyDiscoveryControlUpdates(updates) {
+        applyingDiscoveryControls = true;
         try {
-            $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function() {
-                var field = $(this),
-                    predicateId = ns.Data.attr(field, "predicate-id"),
-                    predicateFields,
-                    relatedInputs,
-                    propertyField,
-                    pathInputs,
-                    pathPredicates,
-                    pathValues,
-                    predicate;
+            (updates || []).forEach(function(update) {
+                var relatedInputs = $(":input[for=\"" + update.id + "\"][form=\"" + getId() + "\"]"),
+                    lowerInput,
+                    upperInput;
 
-                if (!predicateId || processedPredicateIds[predicateId]) {
-                    return;
-                }
-
-                processedPredicateIds[predicateId] = true;
-                predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
-                    "\"][form=\"" + getId() + "\"]");
-                relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]");
-                propertyField = predicateFields.filter(function() {
-                    return /\.property$/.test($(this).attr("name") || "");
-                }).first();
-
-                if (propertyField.length) {
-                    predicate = ns.Search.DiscoveryQuery.findPropertyPredicate(
-                        query,
-                        propertyField.val()
-                    );
-                    applyPredicateValues(predicateFields, relatedInputs, predicate);
+                if (update.kind === "date-range") {
+                    lowerInput = relatedInputs.filter(function() {
+                        return /\.lowerBound$/.test($(this).attr("name") || "");
+                    }).first();
+                    upperInput = relatedInputs.filter(function() {
+                        return /\.upperBound$/.test($(this).attr("name") || "");
+                    }).first();
+                    lowerInput.val(update.state.lowerBound || "");
+                    upperInput.val(update.state.upperBound || "");
                 } else {
-                    pathInputs = relatedInputs.filter(function() {
-                    return isPathInput($(this));
-                    });
-
-                    if (pathInputs.length) {
-                        pathPredicates = ns.Search.DiscoveryQuery.findPathPredicates(
-                            query,
-                            pathInputs.map(function() {
-                                return $(this).attr("name");
-                            }).get(),
-                            pathInputs.map(function() {
-                                return $(this).val();
-                            }).get()
-                        );
-                        pathValues = pathPredicates.reduce(function(values, pathPredicate) {
-                            return values.concat(pathPredicate.values);
-                        }, []);
-                        applyPredicateValues(predicateFields, relatedInputs, {
-                            values: pathValues,
-                            lowerBound: null,
-                            upperBound: null
-                        });
-                    }
+                    applyValuesState(relatedInputs, update.state.values || []);
                 }
             });
-
-            applyDiscoverySort(query);
+            reset();
         } finally {
-            applyingDiscoveryPredicates = false;
+            applyingDiscoveryControls = false;
         }
     }
 
-    function isApplyingDiscoveryPredicates() {
-        return applyingDiscoveryPredicates;
+    function clearDiscoveryControls() {
+        applyDiscoveryControlUpdates(getDiscoveryControls().map(function(control) {
+            return {
+                id: control.id,
+                kind: control.kind,
+                state: control.kind === "date-range" ?
+                    {lowerBound: null, upperBound: null} :
+                    {values: []}
+            };
+        }));
     }
 
-    function getDiscoveryPredicateReplacement(predicateId, currentFormData) {
-        var predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
-                "\"][form=\"" + getId() + "\"]"),
-            relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]"),
-            propertyField = predicateFields.filter(function() {
-                return /\.property$/.test($(this).attr("name") || "");
-            }).first(),
-            pathInputs = relatedInputs.filter(function() {
-                return isPathInput($(this));
-            }),
-            fieldNames,
-            parameters;
-
-        if (!propertyField.length && !pathInputs.length) {
-            return null;
-        }
-
-        fieldNames = predicateFields.add(relatedInputs).map(function() {
-            return $(this).attr("name");
-        }).get();
-
-        parameters = currentFormData.getAll().filter(function(parameter) {
-            return fieldNames.indexOf(parameter.name) > -1;
-        });
-
-        return {
-            kind: propertyField.length ? "property" : "path",
-            propertyPath: propertyField.length ? propertyField.val() : null,
-            pathParameterNames: pathInputs.map(function() {
-                return $(this).attr("name");
-            }).get(),
-            pathOptionValues: pathInputs.map(function() {
-                return $(this).val();
-            }).get(),
-            parameters: parameters
-        };
+    function isApplyingDiscoveryControls() {
+        return applyingDiscoveryControls;
     }
 
-    function serializeDiscoveryQueryFor(query, event, dirtyPredicateIds) {
-        var replacements = [],
-            currentFormData;
+    function isPathControl(predicateId) {
+        var descriptor = predicateId ? descriptorFor(predicateId) : null;
+
+        return descriptor && descriptor.kind === "path";
+    }
+
+    function serializeDiscoveryStateFor(residualQuery, event, discoveryCommandFieldNames) {
+        var clone;
 
         reset();
-        currentFormData = buildFormData(formData, event);
+        clone = clean(formData.clone());
+        clone = _adjustFormData(clone);
 
-        (dirtyPredicateIds || []).forEach(function(predicateId) {
-            var replacement = getDiscoveryPredicateReplacement(predicateId, currentFormData);
-
-            if (replacement) {
-                replacements.push(replacement);
-            }
+        $("[data-asset-share-search-actions]").each(function () {
+            removeAll(clone, $(this).attr("name"));
         });
 
-        query = ns.Search.DiscoveryQuery.mergePredicates(query, replacements);
+        (discoveryCommandFieldNames || []).forEach(function(name) {
+            removeAll(clone, name);
+        });
 
-        return serializeQueryFor(query, event);
+        removeAll(clone, "fulltext");
+        removeAll(clone, "path");
+
+        if (residualQuery && residualQuery.fulltext !== null) {
+            clone.set("fulltext", residualQuery.fulltext);
+        }
+        if (residualQuery && residualQuery.path !== null) {
+            clone.set("path", residualQuery.path);
+        }
+
+        applyActionFields(clone, event);
+
+        return clone.serialize();
     }
 
     function serializeJsonFor(event, resetForm, removeKeys) {
@@ -451,164 +578,18 @@ AssetShare.Search.Form = function (ns) {
         return JSON.stringify(json);
     }
 
-    function fieldsToJson(fields, removeKeys) {
-        var json = {};
-
-        removeKeys = removeKeys || [];
-
-        fields.forEach(function(field) {
-            if (removeKeys.indexOf(field.name) > -1) {
-                return;
-            }
-
-            if (json[field.name]) {
-                if (!Array.isArray(json[field.name])) {
-                    json[field.name] = [json[field.name]];
-                }
-                json[field.name].push(field.value);
-            } else {
-                json[field.name] = field.value;
+    function _adjustFormData(formDataToAdjust) {
+        formDataToAdjust.getAll().forEach(function(field) {
+            if (field.name.endsWith("daterange.upperBound") && field.value &&
+                    !field.value.endsWith("T23:59:59.999Z")) {
+                formDataToAdjust.set(field.name, field.value + "T23:59:59.999Z");
             }
         });
 
-        return json;
+        return formDataToAdjust;
     }
 
-    function getInputLabel(input) {
-        var inputElement = $(input),
-            label;
-
-        if (inputElement.attr("id")) {
-            label = $("label[for=\"" + inputElement.attr("id") + "\"]").first().text();
-        }
-
-        if (!label) {
-            label = inputElement.closest(".checkbox").find("label").first().text();
-        }
-
-        return $.trim(label || "");
-    }
-
-    function getPredicateTitle(predicateId, relatedInputs) {
-        var title = relatedInputs.closest(".content").prev(".title").first().text();
-
-        if (!title) {
-            title = relatedInputs.closest(".accordion").find(".title").first().text();
-        }
-
-        return $.trim(title || predicateId).replace(/\s+/g, " ");
-    }
-
-    function getPredicateOptions(relatedInputs) {
-        var options = [];
-
-        relatedInputs.each(function(index, input) {
-            var inputElement = $(input),
-                type = inputElement.attr("type") || input.tagName.toLowerCase();
-
-            if (inputElement.is("select")) {
-                inputElement.find("option").each(function(optionIndex, option) {
-                    var optionElement = $(option);
-
-                    if ($.trim(optionElement.val()) !== "") {
-                        options.push({
-                            name: inputElement.attr("name"),
-                            value: optionElement.val(),
-                            label: $.trim(optionElement.text()).replace(/\s+/g, " "),
-                            selected: optionElement.is(":selected"),
-                            disabled: optionElement.is(":disabled")
-                        });
-                    }
-                });
-            } else if (type === "checkbox" || type === "radio") {
-                options.push({
-                    name: inputElement.attr("name"),
-                    value: inputElement.val(),
-                    label: getInputLabel(input),
-                    selected: inputElement.is(":checked"),
-                    disabled: inputElement.is(":disabled")
-                });
-            }
-        });
-
-        return options;
-    }
-
-    function serializeDiscoveryContextFor(event, resetForm, removeKeys) {
-        var context,
-            predicates = {};
-
-        if (resetForm) {
-            reset();
-        }
-
-        removeKeys = removeKeys || [];
-
-        context = fieldsToJson(buildFormData(formData, event).getAll(), removeKeys);
-        context.selectedQuery = $.extend({}, context);
-        context.predicates = [];
-
-        $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function(index, element) {
-            var field = $(element),
-                predicateId = ns.Data.attr(field, "predicate-id"),
-                predicate;
-
-            if (!predicateId) {
-                return;
-            }
-
-            if (!predicates[predicateId]) {
-                predicates[predicateId] = {
-                    id: predicateId,
-                    title: "",
-                    fields: [],
-                    inputs: [],
-                    options: []
-                };
-                context.predicates.push(predicates[predicateId]);
-            }
-
-            predicate = predicates[predicateId];
-            predicate.fields.push({
-                name: field.attr("name"),
-                value: field.val()
-            });
-        });
-
-        context.predicates.forEach(function(predicate) {
-            var relatedInputs = $(":input[for=\"" + predicate.id + "\"][form=\"" + getId() + "\"]");
-
-            predicate.title = getPredicateTitle(predicate.id, relatedInputs);
-            predicate.inputs = relatedInputs.map(function(index, input) {
-                var inputElement = $(input);
-
-                return {
-                    name: inputElement.attr("name"),
-                    type: inputElement.attr("type") || input.tagName.toLowerCase(),
-                    value: inputElement.val(),
-                    selected: inputElement.is(":checked") ||
-                        inputElement.is("select") && inputElement.val() !== ""
-                };
-            }).get();
-            predicate.options = getPredicateOptions(relatedInputs);
-        });
-
-        return JSON.stringify(context);
-    }
-
-    function _adjustFormData(formData) {
-        formData.getAll().forEach(function(field) {
-            // Handle date range fields upperBounds to make it the last millisecond of the selected day
-            // Make sure not to double-process field values that have already been adjusted
-            if (field.name.endsWith('daterange.upperBound') && !field.value.endsWith('T23:59:59.999Z')) {
-                formData.set(field.name, field.value + 'T23:59:59.999Z');
-            }
-        });
-
-        return formData;
-    }
-
-    function _valid(formToValidate) {
+    function _valid() {
         var valid = true,
             visible = true;
 
@@ -617,14 +598,14 @@ AssetShare.Search.Form = function (ns) {
                inputElementValid,
                inputElementValidationMessage;
 
-           if (inputElement && inputElement[0]) {
+           if (inputElement && inputElement[0] && typeof inputElement[0].checkValidity === "function") {
                inputElementValid = inputElement[0].checkValidity();
 
                if (!inputElementValid) {
                    valid = false;
-                   visible = visible && inputElement.is(':visible');
+                   visible = visible && inputElement.is(":visible");
 
-                   inputElementValidationMessage = inputElement.data('asset-share-input-validation-message');
+                   inputElementValidationMessage = inputElement.data("asset-share-input-validation-message");
                    if (inputElementValidationMessage) {
                        inputElement[0].setCustomValidity(inputElementValidationMessage);
                    }
@@ -633,22 +614,25 @@ AssetShare.Search.Form = function (ns) {
         });
 
         if (!valid && visible) {
-            // Only trigger if all erroring fields are visible (if not a JS error is thrown)
             $('<input type="submit">').hide().appendTo(_htmlForm()).click().remove();
         }
 
         return valid;
     }
 
+    function isValid() {
+        reset();
+        return _valid();
+    }
+
     function submit(serializationType, resetForm, success, failure) {
         var formToSubmit = serializeFor(serializationType, resetForm);
 
-        if (_valid(formToSubmit)) {
+        if (_valid()) {
             $.when($.get(getUrl(), formToSubmit)).then(success).fail(failure);
             return true;
-        } else {
-            return false;
         }
+        return false;
     }
 
     function submitQuery(query, success) {
@@ -656,7 +640,6 @@ AssetShare.Search.Form = function (ns) {
     }
 
     function init() {
-        // On init, the DOM is king as its populated by the server page load
         url = ns.Data.attr(ns.Elements.element("form"), "action");
         mode = ns.Data.val("mode");
 
@@ -669,14 +652,16 @@ AssetShare.Search.Form = function (ns) {
         url: getUrl,
         serializeFor: serializeFor,
         serializeQueryFor: serializeQueryFor,
-        serializeDiscoveryQueryFor: serializeDiscoveryQueryFor,
-        applyDiscoveryPredicates: applyDiscoveryPredicates,
-        applyDiscoverySort: applyDiscoverySort,
-        isApplyingDiscoveryPredicates: isApplyingDiscoveryPredicates,
+        serializeDiscoveryStateFor: serializeDiscoveryStateFor,
+        applyDiscoveryControlUpdates: applyDiscoveryControlUpdates,
+        clearDiscoveryControls: clearDiscoveryControls,
+        isApplyingDiscoveryControls: isApplyingDiscoveryControls,
+        isPathControl: isPathControl,
         serializeJsonFor: serializeJsonFor,
         serializeDiscoveryContextFor: serializeDiscoveryContextFor,
         id: getId,
         submit: submit,
-        submitQuery: submitQuery
+        submitQuery: submitQuery,
+        isValid: isValid
     };
 };

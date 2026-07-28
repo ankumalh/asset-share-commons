@@ -27,6 +27,10 @@
         action="${currentPage.path @ extension = 'html'}"
         data-asset-share-action="${currentPage.path @ selectors = 'results', extension = 'html'}"
         data-asset-share-id="form">
+    <div data-asset-share-id="discovery-allowed-path-roots" hidden>
+        <span data-sly-repeat.path="${pagePredicate.paths}"
+              data-asset-share-discovery-allowed-path-root="${path}"></span>
+    </div>
     <div class="ui one column grid">
         <div class="column" data-asset-share-id="layout-container">
             <!--/* Include this resource w/ default selectors to get the proper initial view */-->

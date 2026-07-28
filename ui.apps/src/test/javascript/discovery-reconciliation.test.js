@@ -1,7 +1,7 @@
 /*
  * Asset Share Commons
  *
- * Copyright [2017] Adobe
+ * Copyright [2026] Adobe
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  */
@@ -12,9 +12,9 @@ var assert = require("assert"),
     fs = require("fs"),
     path = require("path"),
     vm = require("vm"),
-    discoveryQuery = require(path.resolve(
+    discoveryControls = require(path.resolve(
         __dirname,
-        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/discovery-query.js"
+        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/discovery-controls.js"
     ));
 
 function Collection(elements) {
@@ -23,43 +23,54 @@ function Collection(elements) {
     this[0] = this.elements[0];
 }
 
-Collection.prototype.attr = function(name) {
-    return this.length ? this.elements[0].attributes[name] : undefined;
+Collection.prototype.add = function(collection) {
+    return new Collection(this.elements.concat(collection.elements || []));
 };
-
-Collection.prototype.closest = function() {
-    return new Collection([]);
+Collection.prototype.addClass = function() { return this; };
+Collection.prototype.appendTo = function() { return this; };
+Collection.prototype.attr = function(name, value) {
+    if (!this.length) {
+        return undefined;
+    }
+    if (typeof value === "undefined") {
+        return typeof this.elements[0].attributes[name] !== "undefined" ?
+            this.elements[0].attributes[name] :
+            this.elements[0][name];
+    }
+    this.elements.forEach(function(element) {
+        element.attributes[name] = value;
+    });
+    return this;
 };
-
+Collection.prototype.closest = function() { return new Collection([]); };
+Collection.prototype.data = function() { return null; };
 Collection.prototype.each = function(callback) {
     this.elements.forEach(function(element, index) {
         callback.call(element, index, element);
     });
     return this;
 };
-
 Collection.prototype.filter = function(callback) {
     return new Collection(this.elements.filter(function(element, index) {
         return callback.call(element, index, element);
     }));
 };
-
 Collection.prototype.find = function(selector) {
-    if (!this.length || selector !== "option") {
+    if (!this.length) {
         return new Collection([]);
     }
-
-    return new Collection(this.elements[0].options || []);
+    if (selector === "option") {
+        return new Collection(this.elements[0].options || []);
+    }
+    return new Collection([]);
 };
-
 Collection.prototype.first = function() {
     return new Collection(this.length ? [this.elements[0]] : []);
 };
-
 Collection.prototype.get = function() {
     return this.elements;
 };
-
+Collection.prototype.hide = function() { return this; };
 Collection.prototype.is = function(selector) {
     var element = this.elements[0],
         selectors = selector.split(",");
@@ -70,43 +81,73 @@ Collection.prototype.is = function(selector) {
 
     return selectors.some(function(candidate) {
         return candidate === element.tagName ||
+            candidate === ":input" ||
+            candidate === ":checked" && element.checked ||
+            candidate === ":disabled" && element.disabled ||
             candidate === ":checkbox" && element.type === "checkbox" ||
-            candidate === ":radio" && element.type === "radio";
+            candidate === ":radio" && element.type === "radio" ||
+            candidate === "select" && element.tagName === "select" ||
+            candidate === "textarea" && element.tagName === "textarea" ||
+            candidate === "input" && element.tagName === "input";
     });
 };
-
 Collection.prototype.map = function(callback) {
     return new Collection(this.elements.map(function(element, index) {
         return callback.call(element, index, element);
     }));
 };
-
+Collection.prototype.prev = function() { return new Collection([]); };
 Collection.prototype.prop = function(name, value) {
     if (!this.length) {
         return undefined;
     }
-
     if (typeof value === "undefined") {
         return this.elements[0][name];
     }
-
     this.elements.forEach(function(element) {
         element[name] = value;
     });
     return this;
 };
+Collection.prototype.remove = function() { return this; };
+Collection.prototype.serializeArray = function() {
+    var serialized = [];
 
+    this.elements.forEach(function(element) {
+        if (!element.attributes.name || element.disabled) {
+            return;
+        }
+        if ((element.type === "checkbox" || element.type === "radio") && !element.checked) {
+            return;
+        }
+        if (element.tagName === "select" && Array.isArray(element.value)) {
+            element.value.forEach(function(value) {
+                if (value) {
+                    serialized.push({name: element.attributes.name, value: value});
+                }
+            });
+        } else if (element.value !== "") {
+            serialized.push({name: element.attributes.name, value: element.value});
+        }
+    });
+
+    return serialized;
+};
+Collection.prototype.text = function() {
+    return this.length ? this.elements[0].text || "" : "";
+};
 Collection.prototype.val = function(value) {
     if (!this.length) {
         return undefined;
     }
-
     if (typeof value === "undefined") {
         return this.elements[0].value;
     }
-
     this.elements.forEach(function(element) {
         element.value = value;
+        if (element.tagName === "option") {
+            element.selected = true;
+        }
     });
     return this;
 };
@@ -120,24 +161,37 @@ function field(attributes, value, tagName, type) {
     };
 }
 
-(function generatedQueryUpdatesOnlyExistingControls() {
+(function typedContextAndAtomicControlApplication() {
     var formId = "asset-share-commons__form-id__1",
+        formElement = {attributes: {id: formId}},
+        allowedRoot = {attributes: {"data-asset-share-discovery-allowed-path-root": "/content/dam"}},
         formatProperty = field({
             name: "7_group.propertyvalues.property",
             form: formId,
             "data-asset-share-predicate-id": "format"
         }, "jcr:content/metadata/dc:format"),
-        jpeg = field({name: "7_group.propertyvalues.0_values", form: formId, "for": "format"},
+        jpeg = field({name: "7_group.propertyvalues.0_values", form: formId, "for": "format", id: "jpeg"},
             "image/jpeg", "input", "checkbox"),
-        png = field({name: "7_group.propertyvalues.1_values", form: formId, "for": "format"},
+        png = field({name: "7_group.propertyvalues.1_values", form: formId, "for": "format", id: "png"},
             "image/png", "input", "checkbox"),
-        styleProperty = field({
-            name: "8_group.propertyvalues.property",
+        dateProperty = field({
+            name: "10_group.daterange.property",
             form: formId,
-            "data-asset-share-predicate-id": "style"
-        }, "jcr:content/metadata/style"),
-        style = field({name: "8_group.propertyvalues.values", form: formId, "for": "style"},
-            "portrait", "select"),
+            "data-asset-share-predicate-id": "created"
+        }, "jcr:content/jcr:created"),
+        lowerBound = field({name: "10_group.daterange.lowerBound", form: formId, "for": "created"},
+            "", "input", "text"),
+        upperBound = field({name: "10_group.daterange.upperBound", form: formId, "for": "created"},
+            "", "input", "text"),
+        relativeDateProperty = field({
+            name: "12_group.relativedaterange.property",
+            form: formId,
+            "data-asset-share-predicate-id": "recent"
+        }, "jcr:content/metadata/dc:modified"),
+        lastDay = field({name: "12_group.relativedaterange.lowerBound", form: formId, "for": "recent"},
+            "-1d", "input", "radio"),
+        lastMonth = field({name: "12_group.relativedaterange.lowerBound", form: formId, "for": "recent"},
+            "-1M", "input", "radio"),
         pathBacking = field({
             name: "9_group.p.or",
             form: formId,
@@ -147,30 +201,6 @@ function field(attributes, value, tagName, type) {
             "/content/dam/products", "input", "checkbox"),
         campaigns = field({name: "9_group.1_path", form: formId, "for": "location"},
             "/content/dam/campaigns", "input", "checkbox"),
-        dateProperty = field({
-            name: "10_group.daterange.property",
-            form: formId,
-            "data-asset-share-predicate-id": "modified"
-        }, "jcr:content/jcr:lastModified"),
-        lowerBound = field({name: "10_group.daterange.lowerBound", form: formId, "for": "modified"},
-            "2026-01-01", "input", "text"),
-        upperBound = field({name: "10_group.daterange.upperBound", form: formId, "for": "modified"},
-            "2026-01-31", "input", "text"),
-        relativeDateProperty = field({
-            name: "12_group.relativedaterange.property",
-            form: formId,
-            "data-asset-share-predicate-id": "recent"
-        }, "jcr:content/metadata/dc:modified"),
-        lastDay = field({
-            name: "12_group.relativedaterange.lowerBound",
-            form: formId,
-            "for": "recent"
-        }, "-1d", "input", "radio"),
-        lastMonth = field({
-            name: "12_group.relativedaterange.lowerBound",
-            form: formId,
-            "for": "recent"
-        }, "-1M", "input", "radio"),
         textProperty = field({
             name: "11_group.propertyvalues.property",
             form: formId,
@@ -181,31 +211,34 @@ function field(attributes, value, tagName, type) {
             form: formId,
             "data-asset-share-predicate-id": "keywords"
         }, "|"),
-        keywords = field({name: "11_group.propertyvalues.values", form: formId, "for": "keywords"},
-            "local", "input", "text"),
+        keywords = field({
+            name: "11_group.propertyvalues.values",
+            form: formId,
+            "for": "keywords",
+            minlength: "2",
+            maxlength: "20",
+            pattern: "^[A-Za-z0-9 |]+$"
+        }, "summer", "input", "text"),
         fields = [
             formatProperty, jpeg, png,
-            styleProperty, style,
-            pathBacking, products, campaigns,
             dateProperty, lowerBound, upperBound,
             relativeDateProperty, lastDay, lastMonth,
+            pathBacking, products, campaigns,
             textProperty, delimiter, keywords
         ],
-        initialFieldCount = fields.length,
         context,
-        form;
+        form,
+        snapshot,
+        validated,
+        beforeInvalid;
 
-    jpeg.checked = true;
-    png.checked = false;
-    products.checked = true;
-    campaigns.checked = false;
+    jpeg.checked = false;
+    png.checked = true;
     lastDay.checked = true;
-    lastMonth.checked = false;
-    style.options = [
-        field({}, "", "option"),
-        field({}, "portrait", "option"),
-        field({}, "landscape", "option")
-    ];
+    products.checked = true;
+    [jpeg, png, products, campaigns, lastDay, lastMonth].forEach(function(input) {
+        input.text = input.value;
+    });
 
     function jquery(value) {
         var match;
@@ -213,7 +246,19 @@ function field(attributes, value, tagName, type) {
         if (typeof value !== "string") {
             return new Collection(value ? [value] : []);
         }
-
+        if (value === "form[id=\"" + formId + "\"]") {
+            return new Collection([formElement]);
+        }
+        if (value === "[form=\"" + formId + "\"]") {
+            return new Collection(fields);
+        }
+        if (value === "[data-asset-share-discovery-allowed-path-root]") {
+            return new Collection([allowedRoot]);
+        }
+        if (value === "[data-asset-share-search-actions]" ||
+                value.indexOf("[data-asset-share-search-actions*=") === 0) {
+            return new Collection([]);
+        }
         match = value.match(/^\[data-asset-share-predicate-id\]\[form="([^"]+)"\]$/);
         if (match) {
             return new Collection(fields.filter(function(candidate) {
@@ -221,7 +266,6 @@ function field(attributes, value, tagName, type) {
                     candidate.attributes["data-asset-share-predicate-id"];
             }));
         }
-
         match = value.match(/^\[data-asset-share-predicate-id="([^"]+)"\]\[form="([^"]+)"\]$/);
         if (match) {
             return new Collection(fields.filter(function(candidate) {
@@ -229,7 +273,6 @@ function field(attributes, value, tagName, type) {
                     candidate.attributes.form === match[2];
             }));
         }
-
         match = value.match(/^:input\[for="([^"]+)"\]\[form="([^"]+)"\]$/);
         if (match) {
             return new Collection(fields.filter(function(candidate) {
@@ -237,22 +280,38 @@ function field(attributes, value, tagName, type) {
                     candidate.attributes.form === match[2];
             }));
         }
-
         match = value.match(/^\[name="([^"]+)"\]\[form="([^"]+)"\]$/);
         if (match) {
             return new Collection(fields.filter(function(candidate) {
                 return candidate.attributes.name === match[1] && candidate.attributes.form === match[2];
             }));
         }
-
+        match = value.match(/^\[for="([^"]+)"\]$/);
+        if (match) {
+            return new Collection(fields.filter(function(candidate) {
+                return candidate.attributes["for"] === match[1];
+            }));
+        }
         return new Collection([]);
     }
+
+    jquery.trim = function(value) {
+        return (value || "").trim();
+    };
+    jquery.each = function(values, callback) {
+        values.forEach(callback);
+    };
+    jquery.param = function(values) {
+        return values.map(function(fieldValue) {
+            return encodeURIComponent(fieldValue.name) + "=" + encodeURIComponent(fieldValue.value);
+        }).join("&");
+    };
 
     context = {
         $: jquery,
         jQuery: jquery,
         AssetShare: {
-            Search: {DiscoveryQuery: discoveryQuery},
+            Search: {DiscoveryControls: discoveryControls},
             Data: {
                 attr: function(element, name) {
                     return element.attr("data-asset-share-" + name) || "";
@@ -262,55 +321,79 @@ function field(attributes, value, tagName, type) {
                 }
             },
             Elements: {
-                element: function() {
-                    return new Collection([]);
+                element: function(name) {
+                    return name === "form" ? new Collection([formElement]) : new Collection([]);
                 }
-            },
-            FormData: function() {}
+            }
         }
     };
 
     vm.createContext(context);
-    vm.runInContext(
-        fs.readFileSync(path.resolve(
-            __dirname,
-            "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/search-form.js"
-        ), "utf8"),
-        context
-    );
+    vm.runInContext(fs.readFileSync(path.resolve(
+        __dirname,
+        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/form-data.js"
+    ), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.resolve(
+        __dirname,
+        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/search-form.js"
+    ), "utf8"), context);
 
     form = context.AssetShare.Search.Form(context.AssetShare);
-    form.applyDiscoveryPredicates([
-        "0_property=jcr%3Acontent%2Fmetadata%2Fdc%3Aformat",
-        "0_property.1_value=image%2Fpng",
-        "1_property=jcr%3Acontent%2Fmetadata%2Fstyle",
-        "1_property.1_value=square",
-        "2_group.0_path=%2Fcontent%2Fdam%2Fcampaigns",
-        "3_group.daterange.property=jcr%3Acontent%2Fjcr%3AlastModified",
-        "3_group.daterange.lowerBound=2026-07-01",
-        "3_group.daterange.upperBound=2026-07-27",
-        "6_group.relativedaterange.property=jcr%3Acontent%2Fmetadata%2Fdc%3Amodified",
-        "6_group.relativedaterange.lowerBound=-1M",
-        "4_property=jcr%3Acontent%2Fmetadata%2Fkeywords",
-        "4_property.1_value=red",
-        "4_property.2_value=blue",
-        "5_property=jcr%3Acontent%2Fmetadata%2Funrepresented",
-        "5_property.1_value=kept-in-query"
-    ].join("&"));
+    snapshot = JSON.parse(form.serializeDiscoveryContextFor("search", true, ["fulltext"]));
 
-    assert.strictEqual(jpeg.checked, false);
-    assert.strictEqual(png.checked, true);
-    assert.strictEqual(style.value, "");
-    assert.strictEqual(style.options.length, 3, "must not create an option for square");
-    assert.strictEqual(products.checked, false);
-    assert.strictEqual(campaigns.checked, true);
+    assert.deepStrictEqual(snapshot.query.allowedPathRoots, ["/content/dam"]);
+    assert.deepStrictEqual(snapshot.controls.map(function(control) {
+        return control.kind;
+    }), ["choice", "date-range", "relative-date", "path", "text"]);
+
+    validated = discoveryControls.validateResponse({
+        version: 2,
+        query: {fulltext: null, path: null},
+        controlUpdates: [
+            {id: "format", state: {values: ["image/jpeg"]}},
+            {id: "created", state: {lowerBound: "2026-07-01", upperBound: "2026-07-15"}},
+            {id: "recent", state: {values: ["-1M"]}},
+            {id: "location", state: {values: ["/content/dam/campaigns"]}},
+            {id: "keywords", state: {values: ["red", "blue"]}}
+        ]
+    }, snapshot);
+
+    form.applyDiscoveryControlUpdates(validated.controlUpdates);
+
+    assert.strictEqual(jpeg.checked, true);
+    assert.strictEqual(png.checked, false);
     assert.strictEqual(lowerBound.value, "2026-07-01");
-    assert.strictEqual(upperBound.value, "2026-07-27");
+    assert.strictEqual(upperBound.value, "2026-07-15");
     assert.strictEqual(lastDay.checked, false);
     assert.strictEqual(lastMonth.checked, true);
+    assert.strictEqual(products.checked, false);
+    assert.strictEqual(campaigns.checked, true);
     assert.strictEqual(keywords.value, "red|blue");
-    assert.strictEqual(fields.length, initialFieldCount, "must not create UI fields");
-    assert.strictEqual(form.isApplyingDiscoveryPredicates(), false);
+
+    beforeInvalid = {
+        jpeg: jpeg.checked,
+        png: png.checked,
+        campaigns: campaigns.checked,
+        keywords: keywords.value
+    };
+    assert.throws(function() {
+        var invalid = discoveryControls.validateResponse({
+            version: 2,
+            query: {fulltext: null, path: null},
+            controlUpdates: [
+                {id: "format", state: {values: ["image/png"]}},
+                {id: "location", state: {values: ["/content/dam/missing"]}}
+            ]
+        }, JSON.parse(form.serializeDiscoveryContextFor("search", true, [])));
+        form.applyDiscoveryControlUpdates(invalid.controlUpdates);
+    });
+    assert.deepStrictEqual({
+        jpeg: jpeg.checked,
+        png: png.checked,
+        campaigns: campaigns.checked,
+        keywords: keywords.value
+    }, beforeInvalid);
+    assert.strictEqual(form.isApplyingDiscoveryControls(), false);
 }());
 
 console.log("discovery reconciliation tests passed");

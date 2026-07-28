@@ -5,15 +5,6 @@
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 /*global jQuery: false, AssetShare: false, window: false */
@@ -30,12 +21,11 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         ACTION_SORT = "sort",
         ACTION_SWITCH_LAYOUT = "switch-layout",
         DISCOVERY_COMMAND = "/discovery",
+        DISCOVERY_COMMAND_INSERT = DISCOVERY_COMMAND + " ",
 
         running = false,
-        activeDiscoveryQuery = null,
-        activeDiscoveryPrompt = null,
+        activeDiscoveryState = null,
         activeRequestQuery = null,
-        dirtyDiscoveryPredicateIds = {},
 
         form = ns.Search.Form(ns);
 
@@ -47,23 +37,18 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         $("body").trigger(eventType, params);
     }
 
-    function setAddressBar(queyParams) {
+    function setAddressBar(queryParams) {
         if (ns.Util.isSameOrigin()) {
-            ns.Navigation.addressBar(window.top.location.pathname + "?" + queyParams);
+            ns.Navigation.addressBar(window.top.location.pathname + "?" + queryParams);
         } else {
-            ns.Navigation.addressBar(window.location.pathname + "?" + queyParams);
+            ns.Navigation.addressBar(window.location.pathname + "?" + queryParams);
         }
 
-        ns.Navigation.returnUrl(window.location.pathname + "?" + queyParams);
+        ns.Navigation.returnUrl(window.location.pathname + "?" + queryParams);
     }
 
     function processSearch(fragmentHtml) {
         ns.Elements.update(fragmentHtml, ACTION_SEARCH);
-
-        if (activeDiscoveryQuery) {
-            form.applyDiscoveryPredicates(activeDiscoveryQuery);
-        }
-
         ns.Navigation.gotoTop();
         setAddressBar(activeRequestQuery || form.serializeFor(ACTION_DEEP_LINK));
         activeRequestQuery = null;
@@ -89,6 +74,73 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             ns.Elements.element("discovery-search"),
             "discovery-agent-endpoint"
         ) || "/bin/asset-share-commons/discovery";
+    }
+
+    function getDiscoveryCommandInput() {
+        return ns.Elements.element("discovery-search").find(":input").filter(function() {
+            return $(this).is("input,textarea");
+        }).first();
+    }
+
+    function getDiscoveryCommandMenu() {
+        return ns.Elements.element("discovery-command-menu");
+    }
+
+    function showDiscoveryCommandMenu() {
+        getDiscoveryCommandMenu().removeClass("hidden");
+    }
+
+    function hideDiscoveryCommandMenu() {
+        getDiscoveryCommandMenu().addClass("hidden");
+    }
+
+    function shouldShowDiscoveryCommandMenu(value) {
+        var typed = $.trim(value || "");
+
+        return typed &&
+            typed.charAt(0) === "/" &&
+            typed.indexOf(" ") === -1 &&
+            DISCOVERY_COMMAND.indexOf(typed) === 0 &&
+            typed !== DISCOVERY_COMMAND;
+    }
+
+    function updateDiscoveryCommandMenu() {
+        var input = getDiscoveryCommandInput();
+
+        if (input.length && shouldShowDiscoveryCommandMenu(input.val())) {
+            showDiscoveryCommandMenu();
+        } else {
+            hideDiscoveryCommandMenu();
+        }
+    }
+
+    function insertDiscoveryCommand(e) {
+        var input = getDiscoveryCommandInput();
+
+        if (e) {
+            e.preventDefault();
+        }
+        if (!input.length) {
+            return;
+        }
+
+        input.val(DISCOVERY_COMMAND_INSERT);
+        hideDiscoveryCommandMenu();
+        input.focus();
+    }
+
+    function handleDiscoveryCommandKeydown(e) {
+        var key = e.key || "",
+            menuVisible = !getDiscoveryCommandMenu().hasClass("hidden");
+
+        if (key === "Escape") {
+            hideDiscoveryCommandMenu();
+            return;
+        }
+
+        if (menuVisible && (key === "Enter" || key === "Tab" || key === "ArrowDown")) {
+            insertDiscoveryCommand(e);
+        }
     }
 
     function isDiscoveryCommandValue(value) {
@@ -120,101 +172,56 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     }
 
     function clearDiscoveryState() {
-        activeDiscoveryQuery = null;
-        activeDiscoveryPrompt = null;
-        dirtyDiscoveryPredicateIds = {};
+        activeDiscoveryState = null;
     }
 
-    function markDiscoveryPredicateDirty() {
-        var predicateId = $(this).attr("for");
-
-        if (activeDiscoveryQuery && predicateId && !form.isApplyingDiscoveryPredicates()) {
-            dirtyDiscoveryPredicateIds[predicateId] = true;
-        }
+    function getResidualQuery() {
+        return activeDiscoveryState && activeDiscoveryState.residual || {
+            fulltext: null,
+            path: null
+        };
     }
 
-    function objectToQueryString(queryObject) {
-        var params = [];
-
-        if (!queryObject) {
-            return "";
-        }
-
-        $.each(queryObject, function(key, value) {
-            if (Array.isArray(value)) {
-                value.forEach(function(arrayValue) {
-                    params.push({name: key, value: arrayValue});
-                });
-            } else {
-                params.push({name: key, value: value});
-            }
-        });
-
-        return $.param(params);
-    }
-
-    function parseDiscoveryResponse(response) {
-        var query = response;
-
-        if (!query) {
-            return "";
-        }
-
-        if (typeof query === "string") {
-            try {
-                query = JSON.parse(query);
-            } catch (e) {
-                return query.indexOf("=") > -1 ? query : "";
-            }
-        }
-
-        if (!query || typeof query !== "object" || Array.isArray(query) || query.error) {
-            return "";
-        }
-
-        if (typeof query.query !== "undefined") {
-            query = query.query;
-        } else if (typeof query.queryBuilderQuery !== "undefined") {
-            query = query.queryBuilderQuery;
-        } else if (typeof query.querybuilder !== "undefined") {
-            query = query.querybuilder;
-        } else if (typeof query.queryBuilder !== "undefined") {
-            query = query.queryBuilder;
-        } else if (typeof query.queryParameters !== "undefined") {
-            query = query.queryParameters;
-        } else if (typeof query.params !== "undefined") {
-            query = query.params;
-        }
-
-        if (typeof query === "string") {
-            return query.indexOf("=") > -1 ? query : "";
-        }
-
-        if (!query || typeof query !== "object" || Array.isArray(query)) {
-            return "";
-        }
-
-        return objectToQueryString(query);
-    }
-
-    function normalizeDiscoveryQuery(query) {
-        return ns.Search.DiscoveryQuery.normalizeOrderBy(query);
-    }
-
-    function showDiscoveryQuery(query) {
+    function showDiscoveryState(residualQuery) {
         var queryElement = getDiscoveryQueryElement(),
             outputElement = getDiscoveryQueryOutputElement(),
             titleElement = getDiscoveryQueryTitleElement(),
-            decodedQuery;
+            residual = residualQuery || getResidualQuery(),
+            hasResidual = residual.fulltext !== null || residual.path !== null;
 
-        try {
-            decodedQuery = decodeURIComponent(query.replace(/\+/g, " "));
-        } catch (e) {
-            decodedQuery = query;
+        outputElement.empty();
+        if (!hasResidual) {
+            queryElement.addClass("hidden").removeClass("negative");
+            return;
         }
 
-        titleElement.text(ns.Data.attr(queryElement, "query-title"));
-        outputElement.text(decodedQuery);
+        titleElement.text(ns.Data.attr(queryElement, "residual-title") ||
+            ns.Data.attr(queryElement, "query-title"));
+
+        ["fulltext", "path"].forEach(function(name) {
+            var value = residual[name],
+                item,
+                button;
+
+            if (value === null) {
+                return;
+            }
+
+            item = $("<div>").addClass("item");
+            $("<span>").addClass("asset-share-commons__discovery-residual-label")
+                .text(name + ": " + value)
+                .appendTo(item);
+            button = $("<button>")
+                .attr("type", "button")
+                .attr("data-asset-share-discovery-residual-clear", name)
+                .attr("aria-label", "Clear discovery " + name)
+                .attr("title", "Clear discovery " + name)
+                .addClass("ui compact basic button")
+                .text("Clear");
+            button.appendTo(item);
+            item.appendTo(outputElement);
+        });
+
         queryElement.removeClass("hidden negative");
     }
 
@@ -242,50 +249,62 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         running = false;
     }
 
-    function submitDiscoveryQuery(action, success, searchType) {
-        var query = form.serializeDiscoveryQueryFor(
-            activeDiscoveryQuery,
+    function submitDiscoveryState(action, success, searchType) {
+        var query = form.serializeDiscoveryStateFor(
+            getResidualQuery(),
             action,
-            Object.keys(dirtyDiscoveryPredicateIds)
+            getDiscoverySearchFieldNames()
         );
 
+        if (!form.isValid()) {
+            searchFailed(searchType, false);
+            return;
+        }
+
         activeRequestQuery = query;
-        form.submitQuery(query, function(fragmentHtml) {
-            activeDiscoveryQuery = query;
-            dirtyDiscoveryPredicateIds = {};
-            success(fragmentHtml);
-        }).fail(function() {
+        form.submitQuery(query, success).fail(function() {
             searchFailed(searchType, true);
         });
     }
 
     function discoverySearch() {
         var prompt = getSearchPrompt(),
-            context = form.serializeDiscoveryContextFor(
-                ACTION_SEARCH,
-                true,
-                getDiscoverySearchFieldNames()
-            );
+            contextJson,
+            context;
 
         clearDiscoveryState();
+        form.clearDiscoveryControls();
+        contextJson = form.serializeDiscoveryContextFor(
+                ACTION_SEARCH,
+                true,
+                getDiscoverySearchFieldNames(),
+                getResidualQuery()
+            );
+        context = JSON.parse(contextJson);
+
         hideDiscoveryQuery();
 
         $.when($.post(getDiscoveryEndpoint(), {
             prompt: prompt,
-            context: context
+            context: contextJson
         })).then(function(response) {
-            var query = normalizeDiscoveryQuery(parseDiscoveryResponse(response));
+            var validated;
 
-            if (!query) {
+            try {
+                validated = ns.Search.DiscoveryControls.validateResponse(response, context);
+            } catch (e) {
+                clearDiscoveryState();
                 searchFailed(EVENT_SEARCH_TYPE_FULL, true);
                 return;
             }
 
-            form.applyDiscoveryPredicates(query);
-            showDiscoveryQuery(query);
-            activeDiscoveryQuery = query;
-            activeDiscoveryPrompt = prompt;
-            submitDiscoveryQuery(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
+            form.applyDiscoveryControlUpdates(validated.controlUpdates);
+            activeDiscoveryState = {
+                prompt: prompt,
+                residual: validated.query
+            };
+            showDiscoveryState(validated.query);
+            submitDiscoveryState(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
         }).fail(function() {
             clearDiscoveryState();
             searchFailed(EVENT_SEARCH_TYPE_FULL, true);
@@ -294,12 +313,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
 
     function processLoadMore(fragmentHtml) {
         ns.Elements.update(fragmentHtml, ACTION_LOAD_MORE);
-
-        if (activeDiscoveryQuery) {
-            setAddressBar(form.serializeQueryFor(activeDiscoveryQuery, ACTION_DEEP_LINK));
-        } else {
-            setAddressBar(form.serializeFor(ACTION_DEEP_LINK));
-        }
+        setAddressBar(activeRequestQuery || form.serializeFor(ACTION_DEEP_LINK));
         activeRequestQuery = null;
 
         trigger(ns.Events.SEARCH_END, [EVENT_SEARCH_TYPE_LOAD_MORE]);
@@ -310,17 +324,16 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         if (e) {
             e.preventDefault();
         }
+        if (form.isApplyingDiscoveryControls()) {
+            return;
+        }
         if (!running) {
             running = true;
 
             if (hasDiscoveryCommand()) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
                 if (getSearchPrompt()) {
-                    if (activeDiscoveryQuery && activeDiscoveryPrompt === getSearchPrompt()) {
-                        submitDiscoveryQuery(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
-                    } else {
-                        discoverySearch();
-                    }
+                    discoverySearch();
                 } else {
                     clearDiscoveryState();
                     searchFailed(EVENT_SEARCH_TYPE_FULL, true);
@@ -345,8 +358,8 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (activeDiscoveryQuery) {
-                submitDiscoveryQuery(ACTION_LOAD_MORE, processLoadMore, EVENT_SEARCH_TYPE_LOAD_MORE);
+            if (activeDiscoveryState) {
+                submitDiscoveryState(ACTION_LOAD_MORE, processLoadMore, EVENT_SEARCH_TYPE_LOAD_MORE);
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_LOAD_MORE]);
             } else if (form.submit(ACTION_LOAD_MORE, false, processLoadMore, function() {
                 searchFailed(EVENT_SEARCH_TYPE_LOAD_MORE, false);
@@ -364,8 +377,8 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (activeDiscoveryQuery) {
-                submitDiscoveryQuery(ACTION_SORT, processSearch, EVENT_SEARCH_TYPE_FULL);
+            if (activeDiscoveryState) {
+                submitDiscoveryState(ACTION_SORT, processSearch, EVENT_SEARCH_TYPE_FULL);
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
             } else if (form.submit(ACTION_SORT, false, processSearch, function() {
                 searchFailed(EVENT_SEARCH_TYPE_FULL, false);
@@ -385,8 +398,8 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             running = true;
 
             ns.Data.val("layout", $(this).val());
-            if (activeDiscoveryQuery) {
-                submitDiscoveryQuery(ACTION_SWITCH_LAYOUT, processSearch, EVENT_SEARCH_TYPE_FULL);
+            if (activeDiscoveryState) {
+                submitDiscoveryState(ACTION_SWITCH_LAYOUT, processSearch, EVENT_SEARCH_TYPE_FULL);
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
             } else if (form.submit(ACTION_SWITCH_LAYOUT, false, processSearch, function() {
                 searchFailed(EVENT_SEARCH_TYPE_FULL, false);
@@ -398,8 +411,32 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
     }
 
+    function markDiscoveryInputChanged() {
+        var predicateId = $(this).attr("for");
+
+        if (activeDiscoveryState && predicateId && form.isPathControl(predicateId) &&
+                !form.isApplyingDiscoveryControls()) {
+            activeDiscoveryState.residual.path = null;
+            showDiscoveryState();
+        }
+    }
+
+    function clearResidual(e) {
+        var name = $(this).attr("data-asset-share-discovery-residual-clear");
+
+        if (e) {
+            e.preventDefault();
+        }
+        if (!activeDiscoveryState || (name !== "fulltext" && name !== "path")) {
+            return;
+        }
+
+        activeDiscoveryState.residual[name] = null;
+        showDiscoveryState();
+        search(e);
+    }
+
     (function() {
-        // ONLY EXECUTE ON THE SEARCH PAGE
         if (ns.Elements.element("form").length > 0) {
             ns.Navigation.returnUrl(window.location.pathname + window.location.search);
         }
@@ -412,12 +449,20 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         $("body").on("click", ns.Elements.selector("load-more"), loadMore);
         $("body").on("change", ns.Elements.selector("sort"), sortResults);
         $("body").on("click", ns.Elements.selector("switch-layout"), switchLayout);
+        $("body").on("click", "[data-asset-share-discovery-residual-clear]", clearResidual);
+        $("body").on("click", ns.Elements.selector("discovery-command-option"), insertDiscoveryCommand);
+        $("body").on("input", ns.Elements.selector("discovery-search") + " input", updateDiscoveryCommandMenu);
+        $("body").on("keydown", ns.Elements.selector("discovery-search") + " input", handleDiscoveryCommandKeydown);
+        $("body").on("click", function(e) {
+            if (!$(e.target).closest(ns.Elements.selector("discovery-search")).length) {
+                hideDiscoveryCommandMenu();
+            }
+        });
 
-        $("body").on("input change", "[for][form=\"" + formId + "\"]", markDiscoveryPredicateDirty);
+        $("body").on("input change", "[for][form=\"" + formId + "\"]", markDiscoveryInputChanged);
         $("body").on("change", "[data-asset-share-search-on='change']", search);
         $("body").on("click", "[data-asset-share-search-on='click']", search);
 
-        /* Required for IE */
         $("button[form='" + formId + "']").on("click", search);
         $("input[form='" + formId + "']").keypress(function(e) {
             if ((e.keyCode || e.which) === 13) {
@@ -425,8 +470,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             }
         });
 
-        // Handle navigation back/forward on search page
-        window.addEventListener('popstate', function(event) {
+        window.addEventListener("popstate", function(event) {
             if (getForm()) { window.location.reload(); }
         });
     }());

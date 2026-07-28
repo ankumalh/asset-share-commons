@@ -2,7 +2,7 @@
 
 search-form.js
 search.js
-discovery-query.js
+discovery-controls.js
 search-loading.js
 
 plug-ins/search-infinite-scroll.js
