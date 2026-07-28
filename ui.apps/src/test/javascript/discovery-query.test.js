@@ -71,6 +71,102 @@ function valuesFor(query, name) {
     assert.deepStrictEqual(valuesFor(merged, "fulltext"), ["camera"]);
 }());
 
+(function readsGeneratedPredicatesBySemanticIdentity() {
+    var query = [
+            "0_property=.%2Fjcr%3Acontent%2Fmetadata%2Fdc%3Aformat",
+            "0_property.1_value=image%2Fjpeg",
+            "0_property.2_value=image%2Fpng",
+            "1_group.daterange.property=jcr%3Acontent%2Fjcr%3AlastModified",
+            "1_group.daterange.lowerBound=2026-07-01",
+            "1_group.daterange.upperBound=2026-07-27",
+            "2_group.0_path=%2Fcontent%2Fdam%2Fproducts",
+            "2_group.1_path=%2Fcontent%2Fdam%2Fcampaigns",
+            "fulltext=camera"
+        ].join("&"),
+        propertyPredicate = discoveryQuery.findPropertyPredicate(
+            query,
+            "jcr:content/metadata/dc:format"
+        ),
+        datePredicate = discoveryQuery.findPropertyPredicate(
+            query,
+            "./jcr:content/jcr:lastModified"
+        );
+
+    assert.deepStrictEqual(propertyPredicate.values, ["image/jpeg", "image/png"]);
+    assert.strictEqual(propertyPredicate.kind, "property");
+    assert.strictEqual(datePredicate.kind, "date");
+    assert.strictEqual(datePredicate.lowerBound, "2026-07-01");
+    assert.strictEqual(datePredicate.upperBound, "2026-07-27");
+    assert.deepStrictEqual(discoveryQuery.getPathValues(query), [
+        "/content/dam/products",
+        "/content/dam/campaigns"
+    ]);
+    assert.deepStrictEqual(valuesFor(query, "fulltext"), ["camera"]);
+}());
+
+(function replacesGeneratedPathsWithoutDiscardingOtherPredicates() {
+    var query = [
+            "0_group.p.or=true",
+            "0_group.0_path=%2Fcontent%2Fdam%2Fold",
+            "0_group.1_path=%2Fcontent%2Fdam%2Farchive",
+            "fulltext=camera",
+            "p.limit=24"
+        ].join("&"),
+        merged = discoveryQuery.mergePredicates(query, [{
+            kind: "path",
+            parameters: [
+                {name: "42_group.p.or", value: "true"},
+                {name: "42_group.0_path", value: "/content/dam/current"}
+            ]
+        }]);
+
+    assert.deepStrictEqual(discoveryQuery.getPathValues(merged), ["/content/dam/current"]);
+    assert.deepStrictEqual(valuesFor(merged, "fulltext"), ["camera"]);
+    assert.deepStrictEqual(valuesFor(merged, "p.limit"), ["24"]);
+}());
+
+(function replacesOnlyTheMatchingGeneratedPathGroup() {
+    var query = [
+            "0_group.p.or=true",
+            "0_group.0_path=%2Fcontent%2Fdam%2Fproducts",
+            "1_group.p.or=true",
+            "1_group.0_path=%2Fcontent%2Fdam%2Frestricted",
+            "fulltext=camera"
+        ].join("&"),
+        merged = discoveryQuery.mergePredicates(query, [{
+            kind: "path",
+            pathParameterNames: ["42_group.0_path", "42_group.1_path"],
+            pathOptionValues: [
+                "/content/dam/products",
+                "/content/dam/campaigns"
+            ],
+            parameters: [
+                {name: "42_group.p.or", value: "true"},
+                {name: "42_group.0_path", value: "/content/dam/campaigns"}
+            ]
+        }]);
+
+    assert.deepStrictEqual(discoveryQuery.getPathValues(merged), [
+        "/content/dam/restricted",
+        "/content/dam/campaigns"
+    ]);
+    assert.deepStrictEqual(valuesFor(merged, "0_group.p.or"), []);
+    assert.deepStrictEqual(valuesFor(merged, "1_group.p.or"), ["true"]);
+    assert.deepStrictEqual(valuesFor(merged, "fulltext"), ["camera"]);
+}());
+
+(function normalizesPropertySortWithALeadingQuestionMark() {
+    var normalized = discoveryQuery.normalizeOrderBy(
+        "?fulltext=plant&orderby=jcr%3Acontent%2Fmetadata%2Fdam%3Asize&orderby.sort=desc"
+    );
+
+    assert.deepStrictEqual(valuesFor(normalized, "fulltext"), ["plant"]);
+    assert.deepStrictEqual(valuesFor(normalized, "orderby"), [
+        "@jcr:content/metadata/dam:size"
+    ]);
+    assert.deepStrictEqual(valuesFor(normalized, "orderby.sort"), ["desc"]);
+}());
+
 (function clientlibInitializationPreservesDiscoveryQueryHelper() {
     var clientlibRoot = path.resolve(
             __dirname,

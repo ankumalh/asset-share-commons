@@ -23,7 +23,8 @@ AssetShare.Search.Form = function (ns) {
 
     var url,
         mode,
-        formData;
+        formData,
+        applyingDiscoveryPredicates = false;
 
     function getId() {
        return "asset-share-commons__form-id__1";
@@ -217,12 +218,152 @@ AssetShare.Search.Form = function (ns) {
 
                     if (matchingItem.length && typeof dropdown.dropdown === "function") {
                         dropdown.dropdown("set selected", value);
+                    } else if (typeof dropdown.dropdown === "function") {
+                        dropdown.dropdown("clear");
                     }
                 }
 
                 input.val(value);
             });
         });
+    }
+
+    function isPathInput(input) {
+        var name = input.attr("name") || "",
+            segments = name.split(".");
+
+        return /^(?:\d+_)?path$/.test(segments[segments.length - 1]);
+    }
+
+    function getMatchingOptionValues(input, generatedValues) {
+        var availableValues = input.find("option").map(function() {
+            return $(this).val();
+        }).get();
+
+        return generatedValues.filter(function(value) {
+            return availableValues.indexOf(value) > -1;
+        });
+    }
+
+    function applyChoiceValues(input, generatedValues) {
+        var dropdown,
+            matchingValues;
+
+        if (input.is("select")) {
+            matchingValues = getMatchingOptionValues(input, generatedValues);
+            input.val(input.prop("multiple") ? matchingValues : matchingValues[0] || "");
+
+            dropdown = input.closest(".ui.dropdown");
+            if (dropdown.length && dropdown.attr("data-asset-share-processed") &&
+                    typeof dropdown.dropdown === "function") {
+                dropdown.dropdown("clear");
+                if (matchingValues.length) {
+                    dropdown.dropdown(
+                        "set selected",
+                        input.prop("multiple") ? matchingValues : matchingValues[0]
+                    );
+                }
+            }
+        } else if (input.is(":checkbox,:radio")) {
+            input.prop("checked", generatedValues.indexOf(input.val()) > -1);
+        }
+    }
+
+    function applyPredicateValues(predicateFields, relatedInputs, predicate) {
+        var delimiterField = predicateFields.filter(function() {
+                return /_delimiter$/.test($(this).attr("name") || "");
+            }).first(),
+            delimiter = delimiterField.length ? delimiterField.val() : ",",
+            values = predicate ? predicate.values : [],
+            choiceValues;
+
+        relatedInputs.each(function() {
+            var input = $(this),
+                name = input.attr("name") || "";
+
+            if (input.is("select,:checkbox,:radio")) {
+                choiceValues = /\.lowerBound$/.test(name) && predicate &&
+                    predicate.lowerBound !== null ? [predicate.lowerBound] : values;
+                applyChoiceValues(input, choiceValues);
+            } else if (/\.lowerBound$/.test(name)) {
+                input.val(predicate && predicate.lowerBound || "");
+            } else if (/\.upperBound$/.test(name)) {
+                input.val(predicate && predicate.upperBound || "");
+            } else {
+                input.val(values.join(delimiter));
+            }
+        });
+    }
+
+    function applyDiscoveryPredicates(query) {
+        var processedPredicateIds = {};
+
+        applyingDiscoveryPredicates = true;
+        try {
+            $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function() {
+                var field = $(this),
+                    predicateId = ns.Data.attr(field, "predicate-id"),
+                    predicateFields,
+                    relatedInputs,
+                    propertyField,
+                    pathInputs,
+                    pathPredicates,
+                    pathValues,
+                    predicate;
+
+                if (!predicateId || processedPredicateIds[predicateId]) {
+                    return;
+                }
+
+                processedPredicateIds[predicateId] = true;
+                predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
+                    "\"][form=\"" + getId() + "\"]");
+                relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]");
+                propertyField = predicateFields.filter(function() {
+                    return /\.property$/.test($(this).attr("name") || "");
+                }).first();
+
+                if (propertyField.length) {
+                    predicate = ns.Search.DiscoveryQuery.findPropertyPredicate(
+                        query,
+                        propertyField.val()
+                    );
+                    applyPredicateValues(predicateFields, relatedInputs, predicate);
+                } else {
+                    pathInputs = relatedInputs.filter(function() {
+                    return isPathInput($(this));
+                    });
+
+                    if (pathInputs.length) {
+                        pathPredicates = ns.Search.DiscoveryQuery.findPathPredicates(
+                            query,
+                            pathInputs.map(function() {
+                                return $(this).attr("name");
+                            }).get(),
+                            pathInputs.map(function() {
+                                return $(this).val();
+                            }).get()
+                        );
+                        pathValues = pathPredicates.reduce(function(values, pathPredicate) {
+                            return values.concat(pathPredicate.values);
+                        }, []);
+                        applyPredicateValues(predicateFields, relatedInputs, {
+                            values: pathValues,
+                            lowerBound: null,
+                            upperBound: null
+                        });
+                    }
+                }
+            });
+
+            applyDiscoverySort(query);
+        } finally {
+            applyingDiscoveryPredicates = false;
+        }
+    }
+
+    function isApplyingDiscoveryPredicates() {
+        return applyingDiscoveryPredicates;
     }
 
     function getDiscoveryPredicateReplacement(predicateId, currentFormData) {
@@ -232,10 +373,13 @@ AssetShare.Search.Form = function (ns) {
             propertyField = predicateFields.filter(function() {
                 return /\.property$/.test($(this).attr("name") || "");
             }).first(),
+            pathInputs = relatedInputs.filter(function() {
+                return isPathInput($(this));
+            }),
             fieldNames,
             parameters;
 
-        if (!propertyField.length) {
+        if (!propertyField.length && !pathInputs.length) {
             return null;
         }
 
@@ -248,7 +392,14 @@ AssetShare.Search.Form = function (ns) {
         });
 
         return {
-            propertyPath: propertyField.val(),
+            kind: propertyField.length ? "property" : "path",
+            propertyPath: propertyField.length ? propertyField.val() : null,
+            pathParameterNames: pathInputs.map(function() {
+                return $(this).attr("name");
+            }).get(),
+            pathOptionValues: pathInputs.map(function() {
+                return $(this).val();
+            }).get(),
             parameters: parameters
         };
     }
@@ -268,7 +419,7 @@ AssetShare.Search.Form = function (ns) {
             }
         });
 
-        query = ns.Search.DiscoveryQuery.mergePropertyPredicates(query, replacements);
+        query = ns.Search.DiscoveryQuery.mergePredicates(query, replacements);
 
         return serializeQueryFor(query, event);
     }
@@ -519,7 +670,9 @@ AssetShare.Search.Form = function (ns) {
         serializeFor: serializeFor,
         serializeQueryFor: serializeQueryFor,
         serializeDiscoveryQueryFor: serializeDiscoveryQueryFor,
+        applyDiscoveryPredicates: applyDiscoveryPredicates,
         applyDiscoverySort: applyDiscoverySort,
+        isApplyingDiscoveryPredicates: isApplyingDiscoveryPredicates,
         serializeJsonFor: serializeJsonFor,
         serializeDiscoveryContextFor: serializeDiscoveryContextFor,
         id: getId,

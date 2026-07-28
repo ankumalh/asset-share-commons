@@ -37,11 +37,22 @@ Collection.prototype.closest = function(selector) {
 Collection.prototype.dropdown = function(command, value) {
     var dropdown;
 
-    if (!this.length || command !== "set selected") {
+    if (!this.length) {
         return this;
     }
 
     dropdown = this.elements[0];
+    if (command === "clear") {
+        dropdown.selectedValue = null;
+        dropdown.selectedText = "";
+        dropdown.input.value = "";
+        return this;
+    }
+
+    if (command !== "set selected") {
+        return this;
+    }
+
     dropdown.selectedValue = value;
     dropdown.input.value = value;
     dropdown.selectedText = dropdown.items.filter(function(item) {
@@ -196,6 +207,11 @@ Collection.prototype.val = function(value) {
     assert.strictEqual(directionInput.value, "desc");
     assert.strictEqual(directionDropdown.selectedText, "DESC");
     assert.strictEqual(caseInput.value, "ignore");
+
+    form.applyDiscoverySort("orderby=%40jcr%3Acontent%2Fmetadata%2Funknown");
+
+    assert.strictEqual(orderByInput.value, "@jcr:content/metadata/unknown");
+    assert.strictEqual(orderByDropdown.selectedText, "");
 }());
 
 console.log("discovery sort tests passed");

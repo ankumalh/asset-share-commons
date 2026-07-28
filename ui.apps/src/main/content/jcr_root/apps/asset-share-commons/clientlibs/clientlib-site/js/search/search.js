@@ -60,6 +60,10 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     function processSearch(fragmentHtml) {
         ns.Elements.update(fragmentHtml, ACTION_SEARCH);
 
+        if (activeDiscoveryQuery) {
+            form.applyDiscoveryPredicates(activeDiscoveryQuery);
+        }
+
         ns.Navigation.gotoTop();
         setAddressBar(activeRequestQuery || form.serializeFor(ACTION_DEEP_LINK));
         activeRequestQuery = null;
@@ -124,7 +128,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     function markDiscoveryPredicateDirty() {
         var predicateId = $(this).attr("for");
 
-        if (activeDiscoveryQuery && predicateId) {
+        if (activeDiscoveryQuery && predicateId && !form.isApplyingDiscoveryPredicates()) {
             dirtyDiscoveryPredicateIds[predicateId] = true;
         }
     }
@@ -193,55 +197,8 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         return objectToQueryString(query);
     }
 
-    function normalizeOrderByValue(value) {
-        var trimmed = $.trim(value);
-
-        // QueryBuilder sorts by a JCR property only when the value is prefixed with "@"
-        // (e.g. "@jcr:content/metadata/dam:size"). The keyword sorts "path" and "nodename",
-        // and already-qualified values, are left untouched.
-        if (trimmed === "" ||
-            trimmed.charAt(0) === "@" ||
-            trimmed === "path" ||
-            trimmed === "nodename") {
-            return value;
-        }
-
-        return "@" + trimmed;
-    }
-
     function normalizeDiscoveryQuery(query) {
-        // The discovery agent may return an "orderby" property sort without the "@" prefix
-        // QueryBuilder requires; add it so the sort is honored. Only the "orderby" param is
-        // touched (not orderby.sort / orderby.case).
-        if (!query || query.indexOf("orderby=") === -1) {
-            return query;
-        }
-
-        return $.map(query.split("&"), function(pair) {
-            var separator = pair.indexOf("="),
-                name = separator > -1 ? pair.substring(0, separator) : pair,
-                value = separator > -1 ? pair.substring(separator + 1) : "",
-                decodedName,
-                decodedValue;
-
-            try {
-                decodedName = decodeURIComponent(name.replace(/\+/g, " "));
-            } catch (e) {
-                return pair;
-            }
-
-            if (decodedName !== "orderby") {
-                return pair;
-            }
-
-            try {
-                decodedValue = decodeURIComponent(value.replace(/\+/g, " "));
-            } catch (e) {
-                return pair;
-            }
-
-            return name + "=" + encodeURIComponent(normalizeOrderByValue(decodedValue));
-        }).join("&");
+        return ns.Search.DiscoveryQuery.normalizeOrderBy(query);
     }
 
     function showDiscoveryQuery(query) {
@@ -324,7 +281,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
                 return;
             }
 
-            form.applyDiscoverySort(query);
+            form.applyDiscoveryPredicates(query);
             showDiscoveryQuery(query);
             activeDiscoveryQuery = query;
             activeDiscoveryPrompt = prompt;
