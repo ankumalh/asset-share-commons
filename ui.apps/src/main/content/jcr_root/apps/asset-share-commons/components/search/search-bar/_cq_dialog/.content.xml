@@ -82,6 +82,13 @@
                                         fieldLabel="Discovery Agent Endpoint"
                                         name="./discoveryAgentEndpoint"
                                         value="/bin/asset-share-commons/discovery"/>
+                                    <discovery-debug
+                                        jcr:primaryType="nt:unstructured"
+                                        sling:resourceType="granite/ui/components/coral/foundation/form/checkbox"
+                                        name="./discoveryDebug"
+                                        fieldDescription="Developer/author debugging aid only - displays the raw QueryBuilder query returned by the discovery agent below the search bar. Leave disabled on customer-facing pages."
+                                        text="Show Discovery Query (Debug)"
+                                        value="true"/>
                                 </items>
                             </column>
                         </items>
