@@ -152,7 +152,14 @@ jquery.post = function(url, data) {
     return promise({
         version: 2,
         query: {fulltext: "jpeg", path: "/content/dam/legal"},
-        controlUpdates: [{id: "format", kind: "choice", state: {values: ["image/jpeg"]}}]
+        controlUpdates: [
+            {id: "format", kind: "choice", state: {values: ["image/jpeg"]}},
+            {
+                id: "__asset_share_discovery_sort_orderby",
+                kind: "choice",
+                state: {values: ["jcr:content/metadata/dam:size"]}
+            }
+        ]
     });
 };
 jquery.get = function(url, query) {
@@ -302,6 +309,7 @@ jquery.when = function(result) {
     assert.strictEqual(posts.length, 1, "initial discovery calls the agent");
     assert.strictEqual(clearedControls, 1, "discovery clears writable controls before snapshot");
     assert.deepStrictEqual(appliedUpdates[0][0].state.values, ["image/jpeg"]);
+    assert.deepStrictEqual(appliedUpdates[0][1].state.values, ["jcr:content/metadata/dam:size"]);
     assert.ok(submittedQueries[0].query.indexOf("path=%2Fcontent%2Fdam%2Flegal") > -1);
 
     context.AssetShare.Search.search({preventDefault: function() {}});

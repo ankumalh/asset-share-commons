@@ -15,6 +15,8 @@ AssetShare.Search.Form = function (ns) {
     var url,
         mode,
         formData,
+        SORT_ORDERBY_CONTROL_ID = "__asset_share_discovery_sort_orderby",
+        SORT_DIRECTION_CONTROL_ID = "__asset_share_discovery_sort_direction",
         applyingDiscoveryControls = false;
 
     function getId() {
@@ -389,6 +391,67 @@ AssetShare.Search.Form = function (ns) {
         }).get().filter(Boolean);
     }
 
+    function getSortInput(name) {
+        return $("[data-asset-share-id=\"sort\"][name=\"" + name + "\"][form=\"" + getId() + "\"]").first();
+    }
+
+    function getSortOptions(input) {
+        var options = [];
+
+        input.closest(".ui.dropdown").find(".item").each(function(index, item) {
+            var option = $(item),
+                value = option.attr("data-value");
+
+            if (!value) {
+                return;
+            }
+
+            options.push({
+                value: value,
+                label: $.trim(option.text()).replace(/\s+/g, " "),
+                disabled: option.is(":disabled")
+            });
+        });
+
+        return options;
+    }
+
+    function getDiscoverySortControls() {
+        var orderByInput = getSortInput("orderby"),
+            directionInput = getSortInput("orderby.sort"),
+            options,
+            directions;
+
+        if (!orderByInput.length || !directionInput.length) {
+            return [];
+        }
+
+        options = getSortOptions(orderByInput);
+        directions = getSortOptions(directionInput);
+        if (!options.length || !directions.length) {
+            return [];
+        }
+
+        return [
+            {
+                id: SORT_ORDERBY_CONTROL_ID,
+                title: "SORT BY",
+                kind: "choice",
+                cardinality: "one",
+                state: {values: orderByInput.val() ? [orderByInput.val()] : []},
+                options: options
+            },
+            {
+                id: SORT_DIRECTION_CONTROL_ID,
+                title: "SORT DIRECTION",
+                kind: "choice",
+                cardinality: "one",
+                state: {values: directionInput.val() ? [directionInput.val()] : []},
+                options: directions
+            }
+        ];
+    }
+
     function getResidualQueryFromForm(removeKeys) {
         var current = buildFormData(formData, "search"),
             fulltext = current.get("fulltext") || null,
@@ -409,7 +472,8 @@ AssetShare.Search.Form = function (ns) {
     }
 
     function serializeDiscoveryContextFor(event, resetForm, removeKeys, residualQuery) {
-        var query;
+        var query,
+            context;
 
         if (resetForm) {
             reset();
@@ -417,14 +481,16 @@ AssetShare.Search.Form = function (ns) {
 
         query = residualQuery || getResidualQueryFromForm(removeKeys);
 
-        return JSON.stringify({
+        context = {
             query: {
                 fulltext: query.fulltext || null,
                 path: query.path || null,
                 allowedPathRoots: getAllowedPathRoots()
             },
-            controls: getDiscoveryControls()
-        });
+            controls: getDiscoveryControls().concat(getDiscoverySortControls())
+        };
+
+        return JSON.stringify(context);
     }
 
     function getMatchingOptionValues(input, values) {
@@ -472,13 +538,31 @@ AssetShare.Search.Form = function (ns) {
         });
     }
 
-    function applyDiscoveryControlUpdates(updates) {
+    function expandDiscoveryControl(relatedInputs) {
+        var content = relatedInputs.closest(".content").first(),
+            title = content.prev(".title").first();
+
+        if (!content.length || !title.length) {
+            return;
+        }
+
+        title.addClass("active");
+        content.addClass("active").show();
+    }
+
+    function applyDiscoveryControlUpdates(updates, expandUpdatedControls) {
         applyingDiscoveryControls = true;
+        expandUpdatedControls = expandUpdatedControls !== false;
         try {
             (updates || []).forEach(function(update) {
                 var relatedInputs = $(":input[for=\"" + update.id + "\"][form=\"" + getId() + "\"]"),
                     lowerInput,
                     upperInput;
+
+                if (update.id === SORT_ORDERBY_CONTROL_ID || update.id === SORT_DIRECTION_CONTROL_ID) {
+                    applyDiscoverySortControlUpdate(update);
+                    return;
+                }
 
                 if (update.kind === "date-range") {
                     lowerInput = relatedInputs.filter(function() {
@@ -492,11 +576,70 @@ AssetShare.Search.Form = function (ns) {
                 } else {
                     applyValuesState(relatedInputs, update.state.values || []);
                 }
+
+                if (expandUpdatedControls) {
+                    expandDiscoveryControl(relatedInputs);
+                }
             });
             reset();
         } finally {
             applyingDiscoveryControls = false;
         }
+    }
+
+    function getMatchingSortOption(input, value) {
+        return input.closest(".ui.dropdown").find(".item").filter(function() {
+            return $(this).attr("data-value") === value;
+        }).first();
+    }
+
+    function applyDiscoverySortUpdate(sort) {
+        var orderByInput,
+            directionInput,
+            caseInput,
+            option;
+
+        if (!sort) {
+            return;
+        }
+
+        orderByInput = getSortInput("orderby");
+        directionInput = getSortInput("orderby.sort");
+        if (!orderByInput.length || !directionInput.length) {
+            return;
+        }
+
+        orderByInput.val(sort.orderby);
+        directionInput.val(sort.direction);
+        syncDropdown(orderByInput, [sort.orderby]);
+        syncDropdown(directionInput, [sort.direction]);
+
+        caseInput = getSortInput("orderby.case");
+        if (caseInput.length) {
+            option = getMatchingSortOption(orderByInput, sort.orderby);
+            caseInput.val(option.length &&
+                typeof option.attr("data-asset-share-sort-case-sensitive") !== "undefined" ? "" : "ignore");
+        }
+    }
+
+    function applyDiscoverySortControlUpdate(update) {
+        var values = update.state && update.state.values || [],
+            value = values[0],
+            sort = {};
+
+        if (!value) {
+            return;
+        }
+
+        if (update.id === SORT_ORDERBY_CONTROL_ID) {
+            sort.orderby = value;
+            sort.direction = getSortInput("orderby.sort").val();
+        } else {
+            sort.orderby = getSortInput("orderby").val();
+            sort.direction = value;
+        }
+
+        applyDiscoverySortUpdate(sort);
     }
 
     function clearDiscoveryControls() {
@@ -508,7 +651,7 @@ AssetShare.Search.Form = function (ns) {
                     {lowerBound: null, upperBound: null} :
                     {values: []}
             };
-        }));
+        }), false);
     }
 
     function isApplyingDiscoveryControls() {
@@ -654,6 +797,7 @@ AssetShare.Search.Form = function (ns) {
         serializeQueryFor: serializeQueryFor,
         serializeDiscoveryStateFor: serializeDiscoveryStateFor,
         applyDiscoveryControlUpdates: applyDiscoveryControlUpdates,
+        applyDiscoverySortUpdate: applyDiscoverySortUpdate,
         clearDiscoveryControls: clearDiscoveryControls,
         isApplyingDiscoveryControls: isApplyingDiscoveryControls,
         isPathControl: isPathControl,

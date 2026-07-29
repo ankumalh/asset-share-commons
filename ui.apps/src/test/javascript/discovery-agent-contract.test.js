@@ -109,6 +109,29 @@ var context = {
                     {value: "/content/dam/products", label: "Products", disabled: false},
                     {value: "/content/dam/campaigns", label: "Campaigns", disabled: false}
                 ]
+            },
+            {
+                id: "__asset_share_discovery_sort_orderby",
+                title: "SORT BY",
+                kind: "choice",
+                cardinality: "one",
+                state: {values: ["@jcr:content/jcr:lastModified"]},
+                options: [
+                    {value: "@jcr:content/jcr:lastModified", label: "Last Modified", disabled: false},
+                    {value: "jcr:content/metadata/dam:size", label: "Size", disabled: false},
+                    {value: "jcr:content/metadata/tiff:ImageWidth", label: "Width", disabled: false}
+                ]
+            },
+            {
+                id: "__asset_share_discovery_sort_direction",
+                title: "SORT DIRECTION",
+                kind: "choice",
+                cardinality: "one",
+                state: {values: ["desc"]},
+                options: [
+                    {value: "asc", label: "ASC", disabled: false},
+                    {value: "desc", label: "DESC", disabled: false}
+                ]
             }
     ]
 };

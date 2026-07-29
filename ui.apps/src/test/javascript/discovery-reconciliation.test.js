@@ -42,8 +42,25 @@ Collection.prototype.attr = function(name, value) {
     });
     return this;
 };
-Collection.prototype.closest = function() { return new Collection([]); };
+Collection.prototype.closest = function(selector) {
+    var matches = [];
+
+    this.elements.forEach(function(element) {
+        var current = element.closestElement;
+
+        while (current) {
+            if (selector === ".ui.dropdown" && current.className === "ui dropdown") {
+                matches.push(current);
+                break;
+            }
+            current = current.closestElement;
+        }
+    });
+
+    return new Collection(matches);
+};
 Collection.prototype.data = function() { return null; };
+Collection.prototype.dropdown = function() { return this; };
 Collection.prototype.each = function(callback) {
     this.elements.forEach(function(element, index) {
         callback.call(element, index, element);
@@ -61,6 +78,9 @@ Collection.prototype.find = function(selector) {
     }
     if (selector === "option") {
         return new Collection(this.elements[0].options || []);
+    }
+    if (selector === ".item") {
+        return new Collection(this.elements[0].items || []);
     }
     return new Collection([]);
 };
@@ -219,23 +239,49 @@ function field(attributes, value, tagName, type) {
             maxlength: "20",
             pattern: "^[A-Za-z0-9 |]+$"
         }, "summer", "input", "text"),
+        sortByDropdown = {
+            attributes: {"data-asset-share-processed": "true"},
+            className: "ui dropdown",
+            items: [
+                {attributes: {"data-value": "@jcr:content/jcr:lastModified"}, text: "Last Modified"},
+                {attributes: {"data-value": "jcr:content/metadata/dam:size"}, text: "Size"},
+                {attributes: {"data-value": "jcr:content/metadata/tiff:ImageWidth"}, text: "Width"},
+                {attributes: {"data-value": "jcr:content/metadata/dam:Length"}, text: "Length"}
+            ]
+        },
+        sortDirectionDropdown = {
+            attributes: {"data-asset-share-processed": "true"},
+            className: "ui dropdown",
+            items: [
+                {attributes: {"data-value": "asc"}, text: "ASC"},
+                {attributes: {"data-value": "desc"}, text: "DESC"}
+            ]
+        },
+        sortCase = field({name: "orderby.case", form: formId, "data-asset-share-id": "sort"}, "ignore"),
+        sortBy = field({name: "orderby", form: formId, "data-asset-share-id": "sort"},
+            "@jcr:content/jcr:lastModified"),
+        sortDirection = field({name: "orderby.sort", form: formId, "data-asset-share-id": "sort"}, "desc"),
         fields = [
             formatProperty, jpeg, png,
             dateProperty, lowerBound, upperBound,
             relativeDateProperty, lastDay, lastMonth,
             pathBacking, products, campaigns,
-            textProperty, delimiter, keywords
+            textProperty, delimiter, keywords,
+            sortCase, sortBy, sortDirection
         ],
         context,
         form,
         snapshot,
         validated,
-        beforeInvalid;
+        beforeInvalid,
+        query;
 
     jpeg.checked = false;
     png.checked = true;
     lastDay.checked = true;
     products.checked = true;
+    sortBy.closestElement = sortByDropdown;
+    sortDirection.closestElement = sortDirectionDropdown;
     [jpeg, png, products, campaigns, lastDay, lastMonth].forEach(function(input) {
         input.text = input.value;
     });
@@ -258,6 +304,14 @@ function field(attributes, value, tagName, type) {
         if (value === "[data-asset-share-search-actions]" ||
                 value.indexOf("[data-asset-share-search-actions*=") === 0) {
             return new Collection([]);
+        }
+        match = value.match(/^\[data-asset-share-id="sort"\]\[name="([^"]+)"\]\[form="([^"]+)"\]$/);
+        if (match) {
+            return new Collection(fields.filter(function(candidate) {
+                return candidate.attributes["data-asset-share-id"] === "sort" &&
+                    candidate.attributes.name === match[1] &&
+                    candidate.attributes.form === match[2];
+            }));
         }
         match = value.match(/^\[data-asset-share-predicate-id\]\[form="([^"]+)"\]$/);
         if (match) {
@@ -344,7 +398,16 @@ function field(attributes, value, tagName, type) {
     assert.deepStrictEqual(snapshot.query.allowedPathRoots, ["/content/dam"]);
     assert.deepStrictEqual(snapshot.controls.map(function(control) {
         return control.kind;
-    }), ["choice", "date-range", "relative-date", "path", "text"]);
+    }), ["choice", "date-range", "relative-date", "path", "text", "choice", "choice"]);
+    assert.deepStrictEqual(snapshot.controls[5].state, {
+        values: ["@jcr:content/jcr:lastModified"]
+    });
+    assert.deepStrictEqual(snapshot.controls[5].options.map(function(option) {
+        return option.label;
+    }), ["Last Modified", "Size", "Width", "Length"]);
+    assert.deepStrictEqual(snapshot.controls[5].options.map(function(option) {
+        return Object.prototype.hasOwnProperty.call(option, "caseSensitive");
+    }), [false, false, false, false]);
 
     validated = discoveryControls.validateResponse({
         version: 2,
@@ -354,7 +417,8 @@ function field(attributes, value, tagName, type) {
             {id: "created", state: {lowerBound: "2026-07-01", upperBound: "2026-07-15"}},
             {id: "recent", state: {values: ["-1M"]}},
             {id: "location", state: {values: ["/content/dam/campaigns"]}},
-            {id: "keywords", state: {values: ["red", "blue"]}}
+            {id: "keywords", state: {values: ["red", "blue"]}},
+            {id: "__asset_share_discovery_sort_orderby", state: {values: ["jcr:content/metadata/dam:size"]}}
         ]
     }, snapshot);
 
@@ -369,12 +433,18 @@ function field(attributes, value, tagName, type) {
     assert.strictEqual(products.checked, false);
     assert.strictEqual(campaigns.checked, true);
     assert.strictEqual(keywords.value, "red|blue");
+    assert.strictEqual(sortBy.value, "jcr:content/metadata/dam:size");
+    assert.strictEqual(sortDirection.value, "desc");
+    query = form.serializeDiscoveryStateFor({fulltext: null, path: null}, "search", []);
+    assert.ok(query.indexOf("orderby=jcr%3Acontent%2Fmetadata%2Fdam%3Asize") > -1);
+    assert.ok(query.indexOf("orderby.sort=desc") > -1);
 
     beforeInvalid = {
         jpeg: jpeg.checked,
         png: png.checked,
         campaigns: campaigns.checked,
-        keywords: keywords.value
+        keywords: keywords.value,
+        sortBy: sortBy.value
     };
     assert.throws(function() {
         var invalid = discoveryControls.validateResponse({
@@ -391,7 +461,8 @@ function field(attributes, value, tagName, type) {
         jpeg: jpeg.checked,
         png: png.checked,
         campaigns: campaigns.checked,
-        keywords: keywords.value
+        keywords: keywords.value,
+        sortBy: sortBy.value
     }, beforeInvalid);
     assert.strictEqual(form.isApplyingDiscoveryControls(), false);
 }());

@@ -67,6 +67,29 @@ function context() {
                         {value: "/content/dam/campaigns", label: "Campaigns", disabled: false},
                         {value: "/content/dam/archive", label: "Archive", disabled: true}
                     ]
+                },
+                {
+                    id: "__asset_share_discovery_sort_orderby",
+                    title: "SORT BY",
+                    kind: "choice",
+                    cardinality: "one",
+                    state: {values: ["@jcr:content/jcr:lastModified"]},
+                    options: [
+                        {value: "@jcr:content/jcr:lastModified", label: "Last Modified", disabled: false},
+                        {value: "jcr:content/metadata/dam:size", label: "Size", disabled: false},
+                        {value: "jcr:content/metadata/tiff:ImageWidth", label: "Width", disabled: false}
+                    ]
+                },
+                {
+                    id: "__asset_share_discovery_sort_direction",
+                    title: "SORT DIRECTION",
+                    kind: "choice",
+                    cardinality: "one",
+                    state: {values: ["desc"]},
+                    options: [
+                        {value: "asc", label: "ASC", disabled: false},
+                        {value: "desc", label: "DESC", disabled: false}
+                    ]
                 }
             ]
         }
@@ -81,7 +104,8 @@ function validResponse() {
             {id: "format", state: {values: ["image/jpeg"]}},
             {id: "keywords", state: {values: ["red", "blue"]}},
             {id: "created", state: {lowerBound: "2026-07-01", upperBound: "2026-07-15"}},
-            {id: "location", state: {values: ["/content/dam/campaigns"]}}
+            {id: "location", state: {values: ["/content/dam/campaigns"]}},
+            {id: "__asset_share_discovery_sort_orderby", state: {values: ["jcr:content/metadata/dam:size"]}}
         ]
     };
 }
@@ -101,7 +125,7 @@ function assertRejects(name, mutate) {
     assert.deepStrictEqual(validated.query, {fulltext: "landscape", path: null});
     assert.deepStrictEqual(validated.controlUpdates.map(function(update) {
         return update.id;
-    }), ["format", "keywords", "created", "location"]);
+    }), ["format", "keywords", "created", "location", "__asset_share_discovery_sort_orderby"]);
 }());
 
 [
@@ -122,6 +146,15 @@ function assertRejects(name, mutate) {
     }],
     ["bad text pattern", function(response) {
         response.controlUpdates[1].state.values = ["red!"];
+    }],
+    ["unknown sort option", function(response) {
+        response.controlUpdates[4].state.values = ["jcr:content/metadata/missing"];
+    }],
+    ["unknown sort direction", function(response) {
+        response.controlUpdates[4] = {
+            id: "__asset_share_discovery_sort_direction",
+            state: {values: ["down"]}
+        };
     }],
     ["path outside root", function(response) {
         response.query.path = "/etc/tags";
