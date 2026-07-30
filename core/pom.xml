@@ -129,6 +129,7 @@ Service-Component: OSGI-INF/*.xml
 Sling-Model-Packages: com.adobe.aem.commons.assetshare.components,\
 com.adobe.aem.commons.assetshare.configuration.impl,\
 com.adobe.aem.commons.assetshare.content.impl,\
+com.adobe.aem.commons.assetshare.search.discovery.impl,\
 com.adobe.aem.commons.assetshare.search.impl,\
 com.adobe.aem.commons.assetshare.search.results.impl.result,\
 com.adobe.aem.commons.assetshare.util.impl
@@ -251,6 +252,15 @@ Import-Package: \
         <dependency>
             <groupId>org.osgi</groupId>
             <artifactId>org.osgi.util.converter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- PredicateConverter's implementation is intentionally not part of the
+             public AEM API jar. Include the AEM QueryBuilder bundle only while
+             running the canonical-search integration test. -->
+        <dependency>
+            <groupId>com.day.cq</groupId>
+            <artifactId>cq-search</artifactId>
+            <version>5.9.4</version>
             <scope>test</scope>
         </dependency>
         <!-- End Test dependencies -->

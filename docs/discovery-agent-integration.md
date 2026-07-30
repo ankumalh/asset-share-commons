@@ -1,167 +1,493 @@
-# Discovery Agent Integration — Semantic Search Rail
+# Discovery Agent Integration: Server-Resolved Canonical Search
 
-## What this is
+## Outcome
 
-Asset Share Commons (ASC) users can type a natural-language request — *"show me
-grayscale assets created in the past 10 days"* — into the existing search bar and
-have it correctly populate the existing search-rail filters (facets, date ranges,
-tags, folders) and run the search. There is no new UI, no new page, and no change
-to how a customer has configured their search rail.
+Discovery search resolves a natural-language prompt into the same canonical ASC URL that a user
+would produce by selecting search-rail filters and pressing Search.
 
-The AEM Experience Advisory Agent is the LLM service that interprets the request.
-It does not talk to AEM, does not generate AEM QueryBuilder syntax, and does not
-know anything about JCR property paths, predicate names, or group numbering. It
-only ever sees a small, sanitized, logical description of the search rail's
-current controls and returns the desired new state of those controls.
+The browser does not translate the agent response, mutate filter controls, or execute a
+discovery-specific query. A successful request performs:
 
----
+1. One authenticated agent call.
+2. One navigation to a canonical, same-page ASC URL.
+3. One normal `QuerySearchProviderImpl` QueryBuilder execution after the page reload.
 
-## Design rationale
+Consequently, the URL, server-rendered selected controls, refresh, sharing, Back behavior, hidden
+predicates, page paths, search safety, and custom query processors all use existing ASC behavior.
 
-### Structurally fewer hallucinations — an evolution, not a rewrite
+## Decisions
 
-The first version of this integration asked the agent to generate AEM QueryBuilder
-query strings directly: predicate families (`daterange`, `relativedaterange`,
-`propertyvalues`), JCR property paths, group numbering, operators. It worked in the
-sense that it returned the right assets, but it failed visibly in the UI. The agent
-would pick the wrong predicate family for a field it already had a correct value
-for — absolute-date syntax paired with a relative-offset value, or the generic
-`property` family where the rail actually used `propertyvalues` — and the rail's
-checkboxes and radios would silently fail to reflect the selection. Occasionally it
-invented a plausible-looking JCR path by analogy with a sibling field
-(`jcr:content/jcr:created` instead of the correct bare `jcr:created`).
+This implementation deliberately follows ASC's existing server-rendered search model.
 
-Each of these was fixable, but only by teaching the model a new predicate-family
-rule in prose, one bug at a time — a pattern that would keep recurring for every
-new facet type, because the entire correctness burden lived in prompt engineering.
+| Decision | Reason |
+| --- | --- |
+| Resolve a prompt into a canonical GET URL | A discovery search must finish in the same state as a user selecting filters and pressing Search. The URL, rendered selections, and results are then reproducible without the agent. |
+| Build agent controls from page-scoped Sling Models | The server knows the authored configuration, current request selections, customer overlays, and the actual QueryBuilder parameter mapping. The browser DOM is not the source of truth and does not contain hidden predicates. |
+| Resolve fulltext through the rendered `FulltextPredicate` | Standard ASC pages may submit either `fulltext` or `ai-fulltext`. Mapping the residual semantic query back through the page model preserves AI Search and the server-rendered field value. |
+| Keep QueryBuilder and JCR-property mapping in AEM | The agent reasons about labels, options, constraints, and semantic state. It cannot invent QueryBuilder groups, predicate families, parameter names, or property paths. |
+| Reproduce each component's submitted parameter shape | A semantically equivalent QueryBuilder shape is not sufficient: customer preprocessors and deep-link integrations may observe the request names. Checkbox option indexes, radio indexes, unindexed dropdown names, and repeated multiselect values therefore match manual form serialization. |
+| Treat the agent response as a patch over the current search | Discovery refines the user's current search. Omitted controls remain selected, mentioned controls are fully replaced, and an explicit empty state clears a control. |
+| Validate the complete response before mapping anything | Unknown IDs, invalid states, disabled or unknown options, unsafe paths, and schema changes fail the entire resolution. A partial agent response is never applied. |
+| Never make hidden or page predicates agent-writable | Hidden predicates express application policy. Page predicates define allowed roots. Both remain owned and enforced by the normal ASC search. |
+| Provide a public adapter SPI | Standard ASC predicate interfaces work automatically. Customers with nonstandard models or QueryBuilder shapes can add a focused adapter without replacing the resolver. |
+| Accept one full-page reload | The reload is what restores normal Sling Model rendering, `PredicateUtil` selection handling, hidden-predicate merging, and `QuerySearchProviderImpl` execution. |
 
-This version moves that burden back into code. The agent is handed a narrow,
-closed, semantic vocabulary — opaque control ids and a closed set of option values
-— and returns only `{id, state}` pairs for controls it was explicitly given. There
-is no field in the contract for a QueryBuilder parameter name, a JCR property
-path, a predicate family, sort order, pagination, or layout, so the agent has no
-way to produce one even if it wanted to. Correctness is enforced by a strict,
-code-level response schema and a deterministic validator, not by hoping the model
-remembers a rule it was told once.
+The earlier alternatives were intentionally removed:
 
-| | v1: agent generates QueryBuilder | v2: agent generates semantic controls |
-|---|---|---|
-| Agent's job | Produce a raw QueryBuilder query string | Return `{id, state}` pairs for controls it was given |
-| Correctness enforced by | Prompt engineering, rule by rule | Response schema + deterministic validator |
-| Can invent a property path or predicate family | Yes — observed in production | Not structurally possible |
+- The browser no longer applies agent state directly to rendered controls.
+- `DiscoverySearchProviderImpl` no longer translates the agent response into a parallel
+  QueryBuilder request.
+- Raw agent responses are not embedded in HTL or retained in the destination URL.
 
-### Meets enterprise customers where they already are
+## Request flow
 
-Every enterprise AEM customer runs a customized ASC — their own search-rail
-layout, facets, branding, and component overlays, built up over years of
-investment. This design adds natural-language search as a capability of the search
-rail they already have, not a new UI surface or a parallel search experience to
-adopt, learn, and maintain. A customer's custom facet participates automatically
-the moment it exposes the standard `data-asset-share-predicate-id` contract (see
-[`components/README.md`](../ui.apps/src/main/content/jcr_root/apps/asset-share-commons/components/README.md))
-— no agent changes, no new prompt rules, no re-onboarding.
-
-### AEM calls out, fronted by IMS
-
-`DiscoveryServlet` runs inside AEM and obtains its own IMS access token to call the
-discovery agent (`Authorization: Bearer <token>`); the agent never needs
-credentials to reach into a customer's AEM environment. This sidesteps the class of
-problem where a customer's AEM instance sits behind a custom identity provider,
-VPN, network ACL, or on-prem firewall that an externally-hosted agent could never
-be configured to reach — the direction of the call matches the direction that's
-already trusted and already working today.
-
-### Lower token cost
-
-The agent only ever sees the control descriptors relevant to the visible search
-rail — ids, titles, kinds, closed option lists — not raw AEM schema, QueryBuilder
-documentation, or metadata form definitions. Prompt size, and per-request cost,
-scales with the number of visible search filters, not with the complexity of the
-underlying repository or query language.
-
----
-
-## How it works
-
-```
- ┌────────────┐   1. type prompt    ┌──────────────────────┐
- │  ASC UI     │ ──────────────────▶│  ASC Discovery        │
- │ (browser,   │                    │  Servlet (AEM, Java)  │
- │  search bar)│◀────────────────── │  /bin/asset-share-    │
- └────────────┘  4. control updates │  commons/discovery    │
-       ▲                            └───────────┬───────────┘
-       │                                        │ 2. IMS bearer token
-       │ 5. rail re-renders,                     │    (AEM calls out,
-       │    search re-runs                       │     not the reverse)
-       │                                        ▼
-       │                            ┌───────────────────────┐
-       └────────────────────────────│  Discovery Agent       │
-         3. { prompt, controls[] }  │  POST /transform-query │
-                                    │  (stateless LLM call)  │
-                                    └───────────────────────┘
+```text
+Browser                         AEM resolver                    Agent
+   | POST page.discovery.json       |                            |
+   | prompt + current ASC params -->|                            |
+   |                                | build semantic controls    |
+   |                                | POST v2 prompt/context ---->|
+   |                                |<---- validated state patch |
+   |                                | map patch to ASC params     |
+   |<-- {version, redirectUrl} ------|                            |
+   | window.location.assign         |                            |
+   | GET page.html?... ------------>| normal ASC search          |
 ```
 
-1. The user types a prompt into the existing ASC search bar.
-2. `DiscoveryServlet` obtains a short-lived IMS access token and calls the
-   discovery agent's `POST /transform-query` endpoint, passing the prompt plus a
-   logical description of the search rail's current controls (see below).
-3. The agent — a stateless LLM call, no AEM connection, no memory of prior
-   requests — returns which controls should change and to what values.
-4. The servlet returns this to the browser; ASC's existing client-side search JS
-   applies the updates to the real, rendered search-rail inputs and any residual
-   free-text/path terms.
-5. The rail visibly updates (checkboxes, radios, date pickers) and ASC submits the
-   search exactly as if the user had clicked those same controls by hand.
+The POST target is rendered on the results form as
+`data-asset-share-discovery-action`. The Dispatcher allows only
+`POST /content/*.discovery.json`; `POST *.results.html` is not exposed.
 
-Nothing downstream of step 4 is new: the same QueryBuilder serialization, the same
-search execution, the same results rendering that already existed in ASC keeps
-running unchanged.
+The browser submits the current serialized filter, sort, layout, pagination, and customer
+parameters. It removes the input containing the `/discovery` command and adds `prompt`. AEM builds
+the v2 semantic context from the page's Sling Models by walking `Predicate` components with
+`ComponentModelVisitor`. Command recognition is scoped to the marked discovery search-bar input;
+another freeform or customer field whose legitimate value begins with `/discovery` remains an
+ordinary search value.
 
----
+The current page content resource is the primary model root. Core Component Experience Fragment
+variations rendered by the page are expanded automatically. A reference/include component with a
+different external composition mechanism can register a `DiscoveryModelRootProvider` that returns
+its additional rendered component roots. Those resource paths stay inside AEM; the resolver passes
+only the resulting semantic controls to the agent. Page and hidden predicates found in an external
+model root are never imported as policy—the canonical page continues to own those predicates.
 
-## The wire contract
+Hidden predicates and `PagePredicate` are never writable controls. `PagePredicate` contributes
+only the configured roots needed to validate a residual semantic path. Hidden predicates and
+allowed page paths are applied later by the ordinary canonical GET.
 
-For the example above, the agent receives:
+The successful path contains exactly one agent call, one full-page navigation, and one
+QueryBuilder execution. Refreshing the canonical URL starts at the final GET and therefore makes
+no agent call.
+
+## Browser-to-AEM resolver contract
+
+The endpoint is page-scoped:
+
+```http
+POST /content/asset-share-commons/en/light.discovery.json
+Content-Type: application/x-www-form-urlencoded
+
+prompt=Find+landscape+JPEGs&<current serialized ASC parameters>
+```
+
+The form serializes the current filter, sort, layout, limit, pagination, residual fulltext/path,
+and customer parameters. It excludes the form field carrying the `/discovery` command so the
+command cannot leak into the canonical URL.
+
+The endpoint is registered for `cq:Page`, the `discovery` selector, the `json` extension, and
+`POST`. It adds normal Sling bindings before adapting predicate models because several ASC Sling
+Models use the request and response while calculating their selected state.
+
+On success AEM returns:
 
 ```json
 {
-  "prompt": "show me grayscale assets created in the past 10 days",
+  "version": 1,
+  "redirectUrl": "/content/asset-share-commons/en/light.html?<validated ASC parameters>"
+}
+```
+
+The browser verifies that the redirect is same-origin and calls `window.location.assign`. On
+failure, it remains on the current page and displays the existing discovery error.
+
+## Agent contract
+
+AEM keeps the existing v2 request and response contract. The context contains semantic control
+IDs, titles, kinds, current state, options, cardinality, and constraints. It does not contain
+QueryBuilder group names, predicate parameter names, component resource paths, property paths,
+hidden predicates, or HTML.
+
+AEM sends:
+
+```json
+{
+  "version": 2,
+  "prompt": "Find landscape JPEGs modified in the last month",
   "context": {
+    "query": {
+      "fulltext": null,
+      "path": null,
+      "allowedPathRoots": ["/content/dam"]
+    },
     "controls": [
-      { "id": "cmp-style", "title": "STYLE", "kind": "choice",
-        "options": [{"value": "grayscale", "label": "Grayscale"}, ...] },
-      { "id": "cmp-created", "title": "CREATED", "kind": "date-range",
-        "state": {"lowerBound": null, "upperBound": null} }
+      {
+        "id": "opaque-request-control-id",
+        "title": "File type",
+        "kind": "choice",
+        "cardinality": "many",
+        "state": {"values": []},
+        "options": [
+          {"value": "image/jpeg", "label": "JPEG", "disabled": false}
+        ]
+      }
     ]
   }
 }
 ```
 
-And returns only:
+Configured allowed path roots are included only to constrain an optional residual semantic path.
+JCR property paths and the parameters that implement controls remain server-side. Sort fields are
+represented as opaque values such as `sort-option-0`; after validation, the built-in adapter maps
+that token back to the selected Sling Model option's real `orderby` value.
+
+The agent returns a patch:
 
 ```json
 {
+  "version": 2,
+  "query": {
+    "fulltext": "landscape",
+    "path": null
+  },
   "controlUpdates": [
-    { "id": "cmp-style", "state": {"values": ["grayscale"]} },
-    { "id": "cmp-created", "state": {"lowerBound": "2026-07-19", "upperBound": null} }
+    {
+      "id": "cmp-propertyvalues_123456",
+      "state": {
+        "values": ["image/jpeg"]
+      }
+    }
   ]
 }
 ```
 
-`id` values are opaque, request-scoped tokens. Option values are copied verbatim
-from a closed vocabulary ASC supplied.
+An omitted control keeps its current state. A mentioned control completely replaces its current
+state. `values: []`, or a date range with two null bounds, explicitly clears a control.
 
----
+AEM rejects the whole response for missing or extra schema fields, an unsupported version,
+unknown or duplicate IDs, duplicate values, unknown or disabled options, cardinality or
+constraint violations, invalid text or calendar dates, unsupported sort values, and unsafe paths.
+The agent cannot provide a redirect URL.
 
-## Where to look next
+The resolver returns only:
 
-* [`docs/superpowers/specs/2026-07-28-asc-structured-discovery-controls-v2.md`](superpowers/specs/2026-07-28-asc-structured-discovery-controls-v2.md) —
-  full request/response contract, validation rules, and worked examples.
-* [`components/README.md`](../ui.apps/src/main/content/jcr_root/apps/asset-share-commons/components/README.md) —
-  how a component author marks a search-rail control as agent-writable.
-* `core/src/main/java/.../search/impl/DiscoveryServlet.java` — the IMS-authenticated
-  proxy servlet.
-* `ui.apps/.../clientlibs/clientlib-site/js/search/discovery-controls.js` — client-side
-  correlation between the agent's `controlUpdates` and the rendered rail inputs.
-* `aem-experience-advisory-agent` repo, `src/content_advisor/asc_discovery/` — the
-  agent-side handler, Pydantic schema, and deterministic response validator.
+```json
+{
+  "version": 1,
+  "redirectUrl": "/content/assets.html?<validated ASC parameters>"
+}
+```
+
+Errors use the same version with a stable `error.code` and `error.message`. The browser stays on
+the current page and shows the existing discovery error.
+
+## Canonical parameter reconciliation
+
+The agent result refines the current search:
+
+- Controls omitted by the agent remain unchanged.
+- Parameters for a mentioned control are completely replaced by its adapter.
+- Layout, limit, unrelated manual filters, repeated customer parameters, and other customer state
+  are preserved.
+- `p.offset` is reset to `0`.
+- Prompt, context, discovery transport fields, authoring fields, and agent diagnostics are removed.
+- Residual fulltext is length-validated.
+- Residual fulltext is written using the page's actual `FulltextPredicate` name, including
+  `ai-fulltext` when AI Search is enabled.
+- Residual paths are canonicalized and constrained to the page's configured roots.
+- The destination path always comes from the current AEM page.
+
+The agent controls only semantic fields that the server described. It does not choose the page,
+endpoint, URL, hidden predicates, arbitrary parameters, or QueryBuilder structure.
+
+`PredicateUtil.isParameterizedSearchRequest` recognizes QueryBuilder parameters in a POST body.
+This additional detection is restricted to `POST *.discovery.json`. Existing GET behavior,
+including fulltext-only, path-only, and sort-only deep links, is unchanged. The discovery-specific
+check ensures the Sling Models describe the submitted state instead of reapplying authored
+defaults while the resolver builds its context.
+
+The destination GET then enters the unchanged ASC path:
+
+1. Predicate Sling Models read the canonical query parameters and server-render the selected
+   filter values.
+2. `QuerySearchProviderImpl` builds the QueryBuilder request.
+3. Page paths and hidden predicates are merged.
+4. `SearchSafety`, search preprocessors, and postprocessors run normally.
+5. Results render through the normal ASC results component.
+
+## Customer filter support
+
+The public OSGi `DiscoveryControlAdapter` SPI maps a `Predicate` model in both directions:
+
+```java
+boolean supports(Predicate predicate);
+
+List<DiscoveryControl> describe(
+    SlingHttpServletRequest request,
+    Predicate predicate);
+
+DiscoveryParameterUpdate toParameterUpdate(
+    SlingHttpServletRequest request,
+    Predicate predicate,
+    String controlId,
+    DiscoveryControlState state);
+```
+
+ASC selects the supporting adapter with the highest OSGi service ranking. A customer adapter can
+therefore override a built-in adapter without replacing the resolver.
+
+The built-in adapter supports the public ASC interfaces:
+
+- `PropertyPredicate`, including tags and customer overlays
+- `DatePredicate`, including absolute and relative dates
+- `PathPredicate`
+- `FreeformTextPredicate`
+- `SortPredicate`, including field and direction
+
+Checkbox subtypes use the rendered control's real cardinality. `checkbox` is many-valued, while
+radio, toggle, and slider variants are one-valued. This same cardinality is enforced when the agent
+response is validated and when the adapter produces canonical parameters.
+
+A customer overlay that continues to implement one of these interfaces works automatically,
+including a property filter backed by a custom JCR property. The property path remains inside the
+Sling Model and generated ASC parameters; it is not sent to the agent.
+
+A standard-interface implementation must also expose the mapping information required by that
+interface. In particular, `DatePredicate.getProperty()` must return a nonblank property.
+The method has a default `null` implementation for binary compatibility with older customer
+bundles; those older implementations are deliberately treated as unsupported until they override
+the method or register a custom adapter. This prevents a valid-looking date control from producing
+an incomplete QueryBuilder predicate.
+
+A nonstandard predicate model must expose `Predicate` as a Sling Model adapter type and register a
+`DiscoveryControlAdapter`; a complete standard-interface overlay needs neither step. The custom
+adapter's descriptor should expose semantic values only. Its parameter update must remove every
+old parameter owned by the mentioned control and add the complete replacement. It must not map
+hidden or page predicates.
+
+This means a customer's search-rail filter for a custom JCR property works without additional
+discovery configuration when it continues to use `PropertyPredicate`. The agent receives the
+filter's semantic label and option values; AEM retains the custom property path and translates the
+validated selection back into that component's normal request parameters.
+
+Unsupported predicates remain part of the serialized baseline search but are not exposed as
+agent-writable controls. Their current parameters are preserved unless another supported control
+owns and replaces those same parameters.
+
+### Custom adapter rules
+
+A customer adapter should:
+
+- Return `true` only for the predicate models it owns.
+- Generate request-unique, stable-within-the-request control IDs.
+- Describe the model's current server-resolved state rather than authored defaults alone.
+- Expose only semantic labels, kinds, options, cardinality, and constraints.
+- Treat `toParameterUpdate` as complete replacement for the mentioned control.
+- Return every old owned parameter in `removeParameters`.
+- Add only canonical ASC parameters derived from the validated state, using
+  `Map<String, List<String>>` so repeated request names remain representable.
+- Reproduce the same parameter names and value order that the component's manual form submission
+  produces; do not substitute a merely equivalent QueryBuilder spelling.
+- Never expose or make writable a hidden predicate or page predicate.
+
+Adapters are dynamic OSGi services. The resolver chooses the supporting service with the highest
+`service.ranking`, then the lowest service ID as a deterministic tie-breaker. This permits a
+customer adapter to override a built-in adapter.
+
+The built-in freeform adapter exposes the control's raw text as one semantic value. It re-emits all
+authored delimiter parameters and validates the complete raw value with the same min/max/pattern
+constraints as the HTML input. It does not split and validate individual tokens.
+
+ASC sort parameters are global. If a page renders the same sort component more than once, only the
+first page-order instance is described to the agent; later instances remain equivalent views of
+the same `orderby` state rather than creating duplicate or conflicting controls. Sort option
+values in the agent contract are opaque request-local tokens; labels remain semantic, and raw JCR
+or QueryBuilder sort fields never leave AEM.
+
+### External rendered model roots
+
+The public OSGi `DiscoveryModelRootProvider` SPI is for search controls rendered from a component
+tree outside the current page content subtree:
+
+```java
+Collection<Resource> getModelRoots(
+    SlingHttpServletRequest request,
+    Page currentPage);
+```
+
+ASC always visits the current page first and de-duplicates nested or repeated roots. It supports at
+most 20 total roots. The built-in provider follows localized Core Component Experience Fragment
+variations, including nested variations, with cycle detection. Customer reference/include
+components can register a provider for their own composition mechanism; their standard predicate
+interfaces then use the same built-in control adapters.
+
+## Authentication and configuration
+
+`DiscoveryAgentClientImpl` retains the existing endpoint, timeout, response-size, and
+`AccessTokenProvider` configuration. AEM opens a short-lived service resource resolver, obtains
+the configured IMS bearer token, calls the endpoint, and closes the resolver. Agent credentials
+are never exposed to the browser.
+
+The OSGi PID is:
+
+```text
+com.adobe.aem.commons.assetshare.search.discovery.impl.DiscoveryAgentClientImpl
+```
+
+Supported properties are:
+
+| Property | Purpose | Default |
+| --- | --- | --- |
+| `agent.endpoint` | Absolute HTTP(S) v2 discovery endpoint | empty |
+| `agent.authorization` | Optional complete Authorization header when no configured IMS provider is available | empty |
+| `agent.headers` | Optional additional `Name: Value` request headers | empty |
+| `ims.provider.name` | `AccessTokenProvider` name used for a bearer token | `Asset Compute` |
+| `http.timeout` | Connect, pool, and response timeout in milliseconds | `30000` |
+| `max.response.bytes` | Maximum accepted response body | `1048576` |
+
+The generic `all-cloud` package does not configure an endpoint or environment-specific service
+user mapping. Discovery is opt-in. When the endpoint is absent:
+
+- the results form carries the current discovery contract marker but no resolver action;
+- the search bar does not advertise the `/discovery` command; and
+- direct resolver calls return the stable `not_configured` error without calling an agent.
+
+Existing results-component overlays that predate the discovery action can derive
+`page.discovery.json` from their same-page form action. The current base component emits
+`data-asset-share-discovery-contract="1"` so a missing configured action never enters that
+compatibility path. An explicit `data-asset-share-discovery-enabled="false"` also disables the
+fallback in customer overlays.
+
+Configure an endpoint in the target environment, for example during development:
+
+```json
+{
+  "agent.endpoint": "https://aem-assets-adobe-aem-experience-advisory-agent-depl-d06424.stage.cloud.adobe.io/transform-query",
+  "ims.provider.name": ""
+}
+```
+
+Environment-specific endpoint or authentication values should be supplied through the
+environment's OSGi configuration. Do not commit access tokens.
+
+When `ims.provider.name` resolves to an `AccessTokenProvider`, configure the Sling subservice
+`discovery-ims-client` to an appropriate environment-owned service principal. ASC intentionally
+does not ship a mapping to Adobe's environment-specific `nui-process-service`. When no matching
+IMS provider is configured, the optional `agent.authorization` value is used.
+
+The `all-cloud` package recursively includes the core bundle, UI applications, content,
+configuration, and Dispatcher packages. Build and install it on a local author with:
+
+```bash
+mvn -pl all -am -Pcloud,autoInstallSinglePackage -DskipTests install
+```
+
+The Dispatcher rule is intentionally narrow:
+
+```text
+POST /content/* with selector discovery and extension json
+```
+
+The former broad `POST *.results.html` allowance is not required.
+
+Production traffic must apply an environment-appropriate request-rate policy for
+`POST *.discovery.json` at the CDN/WAF. A JVM-local client-IP limiter is deliberately not used
+because publish nodes normally see proxy addresses and because a cluster-local counter is not an
+authoritative edge limit. AEM still enforces defense-in-depth bounds before an outbound call:
+
+- at most 512 submitted parameter values;
+- parameter names up to 256 characters and values up to 4096 characters;
+- at most 64 KiB of submitted parameter characters;
+- at most 100 controls and 500 options per control;
+- at most 128 KiB of serialized agent context; and
+- at most 16 KiB for the resulting canonical URL.
+
+Requests exceeding these limits fail without calling the agent.
+
+## Failure behavior
+
+The resolver returns stable JSON errors and never queries or navigates on failure. Error classes
+include invalid or oversized input or page state, missing configuration, adapter or model-root
+provider failure, unavailable or unsuccessful agent response, invalid agent response, mapping
+failure, and URL-encoding failure. Responses use `Cache-Control: no-store`. A search-only page with
+no adapter-backed rail controls remains valid: its v2 context has an empty `controls` array and the
+agent can still resolve residual fulltext/path.
+
+Unexpected exceptions are returned as `internal_error`; agent response bodies, credentials, and
+semantic context are not returned to the browser.
+
+## Implementation map
+
+- `DiscoveryPageServlet` owns the page-scoped HTTP contract and stable error envelope.
+- `DiscoveryResolverImpl` visits page models, selects adapters, calls the agent, validates the
+  patch, reconciles parameters, and constructs the same-page URL.
+- `DiscoveryResponseValidator` strictly validates the v2 response before mapping.
+- `DefaultDiscoveryControlAdapter` supports the standard ASC predicate interfaces.
+- `DiscoveryControlAdapter` is the public customer extension SPI.
+- `DiscoveryModelRootProvider` supplies rendered external component roots; the built-in
+  `ExperienceFragmentDiscoveryModelRootProvider` follows Core Component Experience Fragments.
+- `DiscoveryAgentClientImpl` owns authentication, HTTP limits, and the v2 agent call.
+- `DiscoveryConfigurationImpl` exposes the opt-in configured state to HTL without exposing the
+  endpoint or credentials.
+- `ComponentModelVisitor` resolves standard component resource types to their specific predicate
+  interfaces and follows resource supertypes for customer overlays.
+- `search-form.js` serializes current state and posts it to the resolver.
+- `search.js` maintains loading/error behavior and performs same-origin navigation.
+- `results.html` renders the page-specific `.discovery.json` action.
+- `filters.any` exposes only the narrow resolver POST through Dispatcher.
+
+## Verification
+
+Deterministic tests cover built-in adapters, service ranking, patch behavior, response validation,
+POST parameter detection, servlet errors, canonical URL generation, repeated customer parameters,
+exact checkbox/radio/dropdown/multiselect parameter shapes, raw freeform semantics, incomplete date
+models, toggle/slider cardinality, opaque sort mapping, AI Search, search-only pages, Experience
+Fragment roots, duplicate sort renderings, hidden predicates with custom query processors, opt-in
+rendering, overlay fallback, command-input scoping, and browser navigation/error behavior. The
+deterministic browser scripts run automatically from the `ui.apps` Maven `test` phase through
+`npm test`.
+
+The direct live-agent contract test remains opt-in:
+
+```bash
+ASC_DISCOVERY_AGENT_URL="https://<live-endpoint>" \
+ASC_DISCOVERY_PROMPT="Find landscape JPEGs modified in the last month" \
+node ui.apps/src/test/javascript/discovery-agent-contract.test.js
+```
+
+It validates deterministic v2 properties and does not run in normal CI.
+
+The AEM end-to-end check must go through `.discovery.json`, not only call the agent directly:
+
+1. Open an ASC page with standard, custom-property, and hidden predicates.
+2. Submit a discovery prompt while existing filters are selected.
+3. Confirm the response contains a same-page URL and resets `p.offset` to zero.
+4. Navigate to the URL and confirm the selected controls are server-rendered.
+5. Confirm visible agent selections, custom query processors, page paths, and hidden predicates
+   all constrain results.
+6. Refresh and confirm the selected state and results are identical without another agent call.
+7. Verify Back and shared canonical URLs behave like manual ASC searches.
+
+The implementation was exercised locally with the configured live endpoint using standard image,
+relative-date, orientation, and customer-style custom JCR-property filters. The canonical GET
+server-rendered the resulting selections, and returned assets continued to satisfy both custom
+property and hidden predicates.
+
+## Acceptance boundary
+
+The integration is complete when the final page is indistinguishable from the equivalent manual
+search in its selected filters, results, URL, refresh, Back, and sharing behavior. Standard ASC
+predicate-interface overlays with complete mapping information require no discovery-specific
+configuration. An older date implementation without `getProperty()`, or any predicate with a
+nonstandard model or QueryBuilder shape, is outside the built-in mapping and requires the missing
+interface mapping or a `DiscoveryControlAdapter`.

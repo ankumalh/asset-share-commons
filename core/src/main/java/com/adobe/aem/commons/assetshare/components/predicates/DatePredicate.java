@@ -27,6 +27,13 @@ import java.util.List;
 @ConsumerType
 public interface DatePredicate extends Predicate {
 
+    /**
+     * @return the relative property path used for this predicate.
+     */
+    default String getProperty() {
+        return null;
+    }
+
     String getLowerBoundName();
 
     String getUpperBoundName();

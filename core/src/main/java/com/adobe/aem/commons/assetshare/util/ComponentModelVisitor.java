@@ -6,7 +6,11 @@ import org.apache.sling.api.resource.Resource;
 import org.apache.sling.models.factory.ModelFactory;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Utility visitor that walks a Page and collects the models for resources matching at least one of the provided resource Types.
@@ -20,7 +24,8 @@ public final class ComponentModelVisitor<T> extends ResourceTypeVisitor {
 
     private final SlingHttpServletRequest request;
     private final ModelFactory modelFactory;
-    private final Class<T> clazz;
+    private final List<Class<? extends T>> modelClasses;
+    private final Map<String, Class<? extends T>> resourceTypeModelClasses;
 
     /**
      * @param request the SlingHttpServletRequest object
@@ -35,7 +40,10 @@ public final class ComponentModelVisitor<T> extends ResourceTypeVisitor {
         super(resourceTypes);
         this.request = request;
         this.modelFactory = modelFactory;
-        this.clazz = clazz;
+        this.modelClasses = clazz == null
+                ? new ArrayList<>()
+                : new ArrayList<>(Arrays.asList(clazz));
+        this.resourceTypeModelClasses = Collections.emptyMap();
     }
 
     public ComponentModelVisitor(SlingHttpServletRequest request,
@@ -44,7 +52,35 @@ public final class ComponentModelVisitor<T> extends ResourceTypeVisitor {
         super(null);
         this.request = request;
         this.modelFactory = modelFactory;
-        this.clazz = clazz;
+        this.modelClasses = clazz == null
+                ? new ArrayList<>()
+                : new ArrayList<>(Arrays.asList(clazz));
+        this.resourceTypeModelClasses = Collections.emptyMap();
+    }
+
+    /**
+     * Creates a visitor that selects Sling Model adapter types by component
+     * resource type. Resource super types are honored, allowing overlays of a
+     * standard component to use its standard model interface.
+     *
+     * @param request the SlingHttpServletRequest object
+     * @param modelFactory the ModelFactory object used to construct the Model
+     * @param fallbackClass Model type to try when no resource type matches
+     * @param resourceTypeModelClasses resource types and their Model interfaces
+     */
+    public ComponentModelVisitor(SlingHttpServletRequest request,
+                                 ModelFactory modelFactory,
+                                 Class<T> fallbackClass,
+                                 Map<String, Class<? extends T>> resourceTypeModelClasses) {
+        super(null);
+        this.request = request;
+        this.modelFactory = modelFactory;
+        this.modelClasses = fallbackClass == null
+                ? new ArrayList<>()
+                : new ArrayList<>(Arrays.asList(fallbackClass));
+        this.resourceTypeModelClasses = resourceTypeModelClasses == null
+                ? Collections.emptyMap()
+                : resourceTypeModelClasses;
     }
 
     /**
@@ -71,11 +107,24 @@ public final class ComponentModelVisitor<T> extends ResourceTypeVisitor {
     }
 
     private void handleModelVisit(Resource resource) {
-        if (clazz != null) {
-            final T model = modelFactory.getModelFromWrappedRequest(request, resource, clazz);
+        for (final Map.Entry<String, Class<? extends T>> entry : resourceTypeModelClasses.entrySet()) {
+            if (resource.getResourceResolver().isResourceType(resource, entry.getKey())) {
+                final T model = modelFactory.getModelFromWrappedRequest(request, resource, entry.getValue());
+                if (model != null) {
+                    models.add(model);
+                    return;
+                }
+            }
+        }
 
-            if (model != null) {
-                models.add(model);
+        for (final Class<? extends T> modelClass : modelClasses) {
+            if (modelClass != null) {
+                final T model = modelFactory.getModelFromWrappedRequest(request, resource, modelClass);
+
+                if (model != null) {
+                    models.add(model);
+                    break;
+                }
             }
         }
     }

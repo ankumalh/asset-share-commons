@@ -22,8 +22,8 @@ import org.osgi.annotation.versioning.ProviderType;
 
 /**
  * The raw result of a call to the discovery agent. This intentionally carries the agent's
- * response bytes unmodified, alongside HTTP status/content-type metadata, so the caller
- * ({@code DiscoverySearchProviderImpl}) can decide how much of the response it needs to interpret.
+ * response bytes unmodified, alongside HTTP status/content-type metadata, so the server-side
+ * resolver can validate the complete response before producing ASC parameters.
  */
 @ProviderType
 public final class DiscoveryAgentResponse {

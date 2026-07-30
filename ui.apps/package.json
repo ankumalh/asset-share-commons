@@ -1,0 +1,8 @@
+{
+  "name": "asset-share-commons-ui-apps-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node src/test/javascript/discovery-controls.test.js && node src/test/javascript/discovery-lifecycle.test.js && node src/test/javascript/discovery-resolver-submission.test.js && node src/test/javascript/search-loading.test.js"
+  }
+}

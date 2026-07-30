@@ -18,6 +18,7 @@
 
 <sly data-sly-use.placeholderTemplate="core/wcm/components/commons/v1/templates.html"
 	 data-sly-use.predicate="com.adobe.aem.commons.assetshare.components.predicates.FulltextPredicate"
+	 data-sly-use.discovery="com.adobe.aem.commons.assetshare.search.discovery.DiscoveryConfiguration"
 	 data-sly-test.ready="${predicate.isReady}">
 
 	<div class="ui fluid big left icon input asset-share-commons__discovery-search ${properties['hideButton'] ? '' : 'action'}"
@@ -33,7 +34,8 @@
 				form="${predicate.formId}">
 		        ${properties['buttonLabel'] @ i18n}
 		</button>
-		<div class="asset-share-commons__discovery-command-menu hidden"
+		<div data-sly-test="${discovery.enabled}"
+			 class="asset-share-commons__discovery-command-menu hidden"
 			 data-asset-share-id="discovery-command-menu"
 			 role="listbox"
 			 aria-label="${'Discovery commands' @ i18n}">
@@ -49,7 +51,8 @@
 			</button>
 		</div>
 	</div>
-	<div class="ui message asset-share-commons__discovery-query hidden"
+	<div data-sly-test="${discovery.enabled}"
+		 class="ui message asset-share-commons__discovery-query hidden"
 		 data-asset-share-id="discovery-query"
 		 data-asset-share-query-title="${'Discovery constraints' @ i18n}"
 		 data-asset-share-residual-title="${'Discovery constraints' @ i18n}"

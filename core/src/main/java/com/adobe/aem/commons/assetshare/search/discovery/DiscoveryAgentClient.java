@@ -26,8 +26,8 @@ import java.io.IOException;
  * Encapsulates IMS-authenticated calls to the configured discovery agent endpoint.
  *
  * This is the single place that knows how to obtain a bearer token (via the configured
- * {@code AccessTokenProvider}) and issue the HTTP request, consumed by
- * {@code DiscoverySearchProviderImpl} (SearchProvider-based, single round-trip flow).
+ * {@code AccessTokenProvider}) and issue the HTTP request, consumed by the page-scoped discovery
+ * resolver.
  */
 @ProviderType
 public interface DiscoveryAgentClient {

@@ -49,7 +49,26 @@ public final class PredicateUtil {
      * @return true if the request is a parameterized search request.
      */
     public static boolean isParameterizedSearchRequest(SlingHttpServletRequest request) {
-        return Arrays.stream(new String[]{"_group.", "?p.", "&p."}).anyMatch(needle -> StringUtils.contains(request.getQueryString(), needle));
+        final boolean queryStringSearch = Arrays.stream(new String[]{"_group.", "?p.", "&p."})
+                .anyMatch(needle -> StringUtils.contains(request.getQueryString(), needle));
+
+        // A discovery POST carries the complete current state. It is parameterized even when the
+        // only submitted search field is the prompt (for example, a search-only page with no
+        // selected rail controls). Treating it otherwise reapplies authored defaults that the user
+        // did not select.
+        return queryStringSearch || isDiscoveryPost(request);
+    }
+
+    private static boolean isDiscoveryPost(final SlingHttpServletRequest request) {
+        if (!StringUtils.equalsIgnoreCase("POST", request.getMethod())
+                || request.getRequestPathInfo() == null
+                || !StringUtils.equals("json", request.getRequestPathInfo().getExtension())) {
+            return false;
+        }
+
+        final String selectors = request.getRequestPathInfo().getSelectorString();
+        return StringUtils.isNotBlank(selectors)
+                && Arrays.asList(StringUtils.split(selectors, '.')).contains("discovery");
     }
 
     /**

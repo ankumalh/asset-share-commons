@@ -7,7 +7,7 @@
  * you may not use this file except in compliance with the License.
  */
 
-/*global jQuery: false, AssetShare: false, window: false */
+/*global jQuery: false, AssetShare: false, window: false, document: false */
 
 AssetShare.Search = (function (window, $, ns, ajax) {
     "use strict";
@@ -24,7 +24,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         DISCOVERY_COMMAND_INSERT = DISCOVERY_COMMAND + " ",
 
         running = false,
-        activeDiscoveryState = null,
         activeRequestQuery = null,
 
         form = ns.Search.Form(ns);
@@ -141,7 +140,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
     }
 
     function getDiscoverySearchInputs() {
-        return $("#" + form.id()).find(":input").add($("[form='" + form.id() + "']")).filter(function() {
+        return getDiscoveryCommandInput().filter(function() {
             return isDiscoveryCommandValue($(this).val());
         });
     }
@@ -162,60 +161,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
 
     function hasDiscoveryCommand() {
         return getDiscoverySearchInputs().length > 0;
-    }
-
-    function clearDiscoveryState() {
-        activeDiscoveryState = null;
-    }
-
-    function getResidualQuery() {
-        return activeDiscoveryState && activeDiscoveryState.residual || {
-            fulltext: null,
-            path: null
-        };
-    }
-
-    function showDiscoveryState(residualQuery) {
-        var queryElement = getDiscoveryQueryElement(),
-            outputElement = getDiscoveryQueryOutputElement(),
-            titleElement = getDiscoveryQueryTitleElement(),
-            residual = residualQuery || getResidualQuery(),
-            hasResidual = residual.fulltext !== null || residual.path !== null;
-
-        outputElement.empty();
-        if (!hasResidual) {
-            queryElement.addClass("hidden").removeClass("negative");
-            return;
-        }
-
-        titleElement.text(ns.Data.attr(queryElement, "residual-title") ||
-            ns.Data.attr(queryElement, "query-title"));
-
-        ["fulltext", "path"].forEach(function(name) {
-            var value = residual[name],
-                item,
-                button;
-
-            if (value === null) {
-                return;
-            }
-
-            item = $("<div>").addClass("item");
-            $("<span>").addClass("asset-share-commons__discovery-residual-label")
-                .text(name + ": " + value)
-                .appendTo(item);
-            button = $("<button>")
-                .attr("type", "button")
-                .attr("data-asset-share-discovery-residual-clear", name)
-                .attr("aria-label", "Clear discovery " + name)
-                .attr("title", "Clear discovery " + name)
-                .addClass("ui compact basic button")
-                .text("Clear");
-            button.appendTo(item);
-            item.appendTo(outputElement);
-        });
-
-        queryElement.removeClass("hidden negative");
     }
 
     function hideDiscoveryQuery() {
@@ -242,58 +187,27 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         running = false;
     }
 
-    function submitDiscoveryState(action, success, searchType) {
-        var query = form.serializeDiscoveryStateFor(
-            getResidualQuery(),
-            action,
-            getDiscoverySearchFieldNames()
-        );
+    function isSameOrigin(url) {
+        var target = document.createElement("a"),
+            current = document.createElement("a");
 
-        if (!form.isValid()) {
-            searchFailed(searchType, false);
-            return;
-        }
-
-        activeRequestQuery = query;
-        form.submitQuery(query, success).fail(function() {
-            searchFailed(searchType, true);
-        });
-    }
-
-    function extractDiscoveryAgentResponse(fragmentHtml) {
-        var parsed = $("<div></div>").html(fragmentHtml),
-            responseElement = ns.Elements.element("discovery-agent-response", parsed),
-            raw;
-
-        if (!responseElement.length) {
-            return null;
-        }
-
-        raw = ns.Data.attr(responseElement, "discovery-agent-response");
-
-        return raw || null;
+        target.href = url;
+        current.href = window.location.href;
+        return target.protocol === current.protocol && target.host === current.host;
     }
 
     function discoverySearch() {
         var prompt = getSearchPrompt(),
-            contextJson,
-            context,
             baselineQuery;
-
-        clearDiscoveryState();
-        form.clearDiscoveryControls();
-        contextJson = form.serializeDiscoveryContextFor(
-                ACTION_SEARCH,
-                true,
-                getDiscoverySearchFieldNames(),
-                getResidualQuery()
-            );
-        context = JSON.parse(contextJson);
 
         hideDiscoveryQuery();
 
+        if (!form.isDiscoveryEnabled()) {
+            searchFailed(EVENT_SEARCH_TYPE_FULL, true);
+            return;
+        }
+
         baselineQuery = form.serializeDiscoveryStateFor(
-            getResidualQuery(),
             ACTION_SEARCH,
             getDiscoverySearchFieldNames()
         );
@@ -303,43 +217,24 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             return;
         }
 
-        form.submitDiscoveryQuery(prompt, contextJson, baselineQuery, function(fragmentHtml) {
-            var agentResponse = extractDiscoveryAgentResponse(fragmentHtml),
-                validated;
-
-            if (!agentResponse) {
-                clearDiscoveryState();
-                searchFailed(EVENT_SEARCH_TYPE_FULL, true);
-                return;
-            }
-
+        form.submitDiscoveryResolution(prompt, baselineQuery, function(response) {
             try {
-                validated = ns.Search.DiscoveryControls.validateResponse(agentResponse, context);
+                if (typeof response === "string") {
+                    response = JSON.parse(response);
+                }
             } catch (e) {
-                clearDiscoveryState();
                 searchFailed(EVENT_SEARCH_TYPE_FULL, true);
                 return;
             }
 
-            form.applyDiscoveryControlUpdates(validated.controlUpdates);
-            activeDiscoveryState = {
-                prompt: prompt,
-                residual: validated.query
-            };
-            showDiscoveryState(validated.query);
+            if (!response || response.version !== 1 || !response.redirectUrl ||
+                    !isSameOrigin(response.redirectUrl)) {
+                searchFailed(EVENT_SEARCH_TYPE_FULL, true);
+                return;
+            }
 
-            // The actual asset search already ran server-side (DiscoverySearchProviderImpl), so
-            // fragmentHtml already reflects the agent-resolved query -- no second request is made.
-            // Only the address-bar deep-link query is recomputed here, from the now rail-synced DOM.
-            activeRequestQuery = form.serializeDiscoveryStateFor(
-                getResidualQuery(),
-                ACTION_SEARCH,
-                getDiscoverySearchFieldNames()
-            );
-
-            processSearch(fragmentHtml);
+            window.location.assign(response.redirectUrl);
         }).fail(function() {
-            clearDiscoveryState();
             searchFailed(EVENT_SEARCH_TYPE_FULL, true);
         });
     }
@@ -357,9 +252,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         if (e) {
             e.preventDefault();
         }
-        if (form.isApplyingDiscoveryControls()) {
-            return;
-        }
         if (!running) {
             running = true;
 
@@ -368,11 +260,9 @@ AssetShare.Search = (function (window, $, ns, ajax) {
                 if (getSearchPrompt()) {
                     discoverySearch();
                 } else {
-                    clearDiscoveryState();
                     searchFailed(EVENT_SEARCH_TYPE_FULL, true);
                 }
             } else {
-                clearDiscoveryState();
                 hideDiscoveryQuery();
                 if (form.submit(ACTION_SEARCH, true, processSearch, function() {
                     searchFailed(EVENT_SEARCH_TYPE_FULL, false);
@@ -391,10 +281,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (activeDiscoveryState) {
-                submitDiscoveryState(ACTION_LOAD_MORE, processLoadMore, EVENT_SEARCH_TYPE_LOAD_MORE);
-                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_LOAD_MORE]);
-            } else if (form.submit(ACTION_LOAD_MORE, false, processLoadMore, function() {
+            if (form.submit(ACTION_LOAD_MORE, false, processLoadMore, function() {
                 searchFailed(EVENT_SEARCH_TYPE_LOAD_MORE, false);
             })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_LOAD_MORE]);
@@ -410,10 +297,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         }
         if (!running) {
             running = true;
-            if (activeDiscoveryState) {
-                submitDiscoveryState(ACTION_SORT, processSearch, EVENT_SEARCH_TYPE_FULL);
-                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
-            } else if (form.submit(ACTION_SORT, false, processSearch, function() {
+            if (form.submit(ACTION_SORT, false, processSearch, function() {
                 searchFailed(EVENT_SEARCH_TYPE_FULL, false);
             })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
@@ -431,10 +315,7 @@ AssetShare.Search = (function (window, $, ns, ajax) {
             running = true;
 
             ns.Data.val("layout", $(this).val());
-            if (activeDiscoveryState) {
-                submitDiscoveryState(ACTION_SWITCH_LAYOUT, processSearch, EVENT_SEARCH_TYPE_FULL);
-                trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
-            } else if (form.submit(ACTION_SWITCH_LAYOUT, false, processSearch, function() {
+            if (form.submit(ACTION_SWITCH_LAYOUT, false, processSearch, function() {
                 searchFailed(EVENT_SEARCH_TYPE_FULL, false);
             })) {
                 trigger(ns.Events.SEARCH_BEGIN, [EVENT_SEARCH_TYPE_FULL]);
@@ -442,31 +323,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
                 searchFailed(EVENT_SEARCH_TYPE_FULL, false);
             }
         }
-    }
-
-    function markDiscoveryInputChanged() {
-        var predicateId = $(this).attr("for");
-
-        if (activeDiscoveryState && predicateId && form.isPathControl(predicateId) &&
-                !form.isApplyingDiscoveryControls()) {
-            activeDiscoveryState.residual.path = null;
-            showDiscoveryState();
-        }
-    }
-
-    function clearResidual(e) {
-        var name = $(this).attr("data-asset-share-discovery-residual-clear");
-
-        if (e) {
-            e.preventDefault();
-        }
-        if (!activeDiscoveryState || (name !== "fulltext" && name !== "path")) {
-            return;
-        }
-
-        activeDiscoveryState.residual[name] = null;
-        showDiscoveryState();
-        search(e);
     }
 
     (function() {
@@ -482,7 +338,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         $("body").on("click", ns.Elements.selector("load-more"), loadMore);
         $("body").on("change", ns.Elements.selector("sort"), sortResults);
         $("body").on("click", ns.Elements.selector("switch-layout"), switchLayout);
-        $("body").on("click", "[data-asset-share-discovery-residual-clear]", clearResidual);
         $("body").on("click", ns.Elements.selector("discovery-command-option"), insertDiscoveryCommand);
         $("body").on("input", ns.Elements.selector("discovery-search") + " input", updateDiscoveryCommandMenu);
         $("body").on("keydown", ns.Elements.selector("discovery-search") + " input", handleDiscoveryCommandKeydown);
@@ -491,8 +346,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
                 hideDiscoveryCommandMenu();
             }
         });
-
-        $("body").on("input change", "[for][form=\"" + formId + "\"]", markDiscoveryInputChanged);
         $("body").on("change", "[data-asset-share-search-on='change']", search);
         $("body").on("click", "[data-asset-share-search-on='click']", search);
 

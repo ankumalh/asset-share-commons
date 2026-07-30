@@ -12,7 +12,7 @@ var assert = require("assert"),
     path = require("path"),
     discoveryControls = require(path.resolve(
         __dirname,
-        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/discovery-controls.js"
+        "helpers/discovery-controls.js"
     ));
 
 function context() {
@@ -73,11 +73,11 @@ function context() {
                     title: "SORT BY",
                     kind: "choice",
                     cardinality: "one",
-                    state: {values: ["@jcr:content/jcr:lastModified"]},
+                    state: {values: ["sort-option-0"]},
                     options: [
-                        {value: "@jcr:content/jcr:lastModified", label: "Last Modified", disabled: false},
-                        {value: "jcr:content/metadata/dam:size", label: "Size", disabled: false},
-                        {value: "jcr:content/metadata/tiff:ImageWidth", label: "Width", disabled: false}
+                        {value: "sort-option-0", label: "Last Modified", disabled: false},
+                        {value: "sort-option-1", label: "Size", disabled: false},
+                        {value: "sort-option-2", label: "Width", disabled: false}
                     ]
                 },
                 {
@@ -105,7 +105,7 @@ function validResponse() {
             {id: "keywords", state: {values: ["red", "blue"]}},
             {id: "created", state: {lowerBound: "2026-07-01", upperBound: "2026-07-15"}},
             {id: "location", state: {values: ["/content/dam/campaigns"]}},
-            {id: "__asset_share_discovery_sort_orderby", state: {values: ["jcr:content/metadata/dam:size"]}}
+            {id: "__asset_share_discovery_sort_orderby", state: {values: ["sort-option-1"]}}
         ]
     };
 }
@@ -148,7 +148,7 @@ function assertRejects(name, mutate) {
         response.controlUpdates[1].state.values = ["red!"];
     }],
     ["unknown sort option", function(response) {
-        response.controlUpdates[4].state.values = ["jcr:content/metadata/missing"];
+        response.controlUpdates[4].state.values = ["sort-option-missing"];
     }],
     ["unknown sort direction", function(response) {
         response.controlUpdates[4] = {

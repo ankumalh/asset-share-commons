@@ -3,15 +3,21 @@ package com.adobe.aem.commons.assetshare.util;
 import com.day.cq.search.PredicateConverter;
 import com.day.cq.search.PredicateGroup;
 import io.wcm.testing.mock.aem.junit.AemContext;
+import org.apache.sling.api.SlingHttpServletRequest;
+import org.apache.sling.api.request.RequestParameterMap;
+import org.apache.sling.api.request.RequestPathInfo;
 import org.apache.sling.api.resource.ValueMap;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class PredicateUtilTest {
 
@@ -136,6 +142,40 @@ public class PredicateUtilTest {
     }
 
     @Test
+    public void isParameterizedSearchRequest_TrueForPostBody() {
+        final SlingHttpServletRequest request = postRequest("discovery", "json");
+
+        assertTrue(PredicateUtil.isParameterizedSearchRequest(request));
+    }
+
+    @Test
+    public void isParameterizedSearchRequest_TrueForPromptOnlyDiscoveryPost() {
+        final SlingHttpServletRequest request = postRequest("discovery", "json");
+        when(request.getRequestParameterMap().keySet()).thenReturn(
+                Collections.singleton("prompt"));
+
+        assertTrue(PredicateUtil.isParameterizedSearchRequest(request));
+    }
+
+    @Test
+    public void isParameterizedSearchRequest_DoesNotChangeLegacyGetBehavior() {
+        final Map<String, Object> parameters = new HashMap<>();
+        parameters.put("fulltext", "landscape");
+        parameters.put("path", "/content/dam");
+        parameters.put("orderby", "@jcr:content/jcr:lastModified");
+        ctx.request().setParameterMap(parameters);
+        ctx.request().setQueryString(
+                "fulltext=landscape&path=%2Fcontent%2Fdam&orderby=%40jcr%3Acontent%2Fjcr%3AlastModified");
+
+        assertFalse(PredicateUtil.isParameterizedSearchRequest(ctx.request()));
+    }
+
+    @Test
+    public void isParameterizedSearchRequest_IgnoresNonDiscoveryPostBody() {
+        assertFalse(PredicateUtil.isParameterizedSearchRequest(postRequest("results", "html")));
+    }
+
+    @Test
     public void isParameterizedSearchRequest_False() {
         ctx.request().setQueryString("");
         assertFalse(PredicateUtil.isParameterizedSearchRequest(ctx.request()));
@@ -145,6 +185,21 @@ public class PredicateUtilTest {
 
         ctx.request().setQueryString("marketingid=123&script=alert('XSS')");
         assertFalse(PredicateUtil.isParameterizedSearchRequest(ctx.request()));
+    }
+
+    private SlingHttpServletRequest postRequest(final String selector, final String extension) {
+        final SlingHttpServletRequest request = mock(SlingHttpServletRequest.class);
+        final RequestPathInfo pathInfo = mock(RequestPathInfo.class);
+        final RequestParameterMap parameters = mock(RequestParameterMap.class);
+        when(request.getMethod()).thenReturn("POST");
+        when(request.getQueryString()).thenReturn("");
+        when(request.getRequestPathInfo()).thenReturn(pathInfo);
+        when(pathInfo.getSelectorString()).thenReturn(selector);
+        when(pathInfo.getExtension()).thenReturn(extension);
+        when(request.getRequestParameterMap()).thenReturn(parameters);
+        when(parameters.keySet()).thenReturn(Collections.singleton(
+                "5_group.propertyvalues.0_values"));
+        return request;
     }
 
 }

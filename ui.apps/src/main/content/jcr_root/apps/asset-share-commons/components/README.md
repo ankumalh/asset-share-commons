@@ -1,52 +1,63 @@
 # Component Style Guide
 
-## Discovery Agent UI Contract
+## Discovery Agent Predicate Contract
 
-Search predicates that participate in discovery-agent structured controls must expose a stable predicate ID that links internal QueryBuilder backing fields to user-editable controls. ASC sends only logical control descriptors to the agent; it never sends QueryBuilder parameter names, group IDs, property paths, delimiters, or hidden predicate details.
+Discovery controls are generated server-side from the page's Sling Models. Component HTML is not
+inspected or sent to the agent, and JavaScript never applies the returned state directly to DOM
+inputs.
 
-* Add `data-asset-share-predicate-id="<predicateId>"` to at least one QueryBuilder backing field.
-* Add `for="<predicateId>"` to each related `input`, `select`, or `textarea` that displays or edits the predicate value.
-* Set the same `form` attribute on the backing fields and related inputs. The value must match the Asset Share search form ID.
-* Property-backed checkbox, radio, and select controls are inferred as `choice`. Radio and single select controls use `one` cardinality; checkboxes and multiple selects use `many`.
-* Freeform text and textarea controls are inferred as `text`. Logical `values` are split from the visible value using the component's internal delimiter backing field. ASC exposes HTML constraints such as `required`, `minlength`, `maxlength`, `pattern`, and `data-asset-share-max-values`.
-* Text inputs whose names end in `lowerBound` or `upperBound` are inferred as `date-range`. The agent receives and returns UI date strings (`YYYY-MM-DD`) before ASC applies QueryBuilder end-of-day conversion.
-* Choice controls whose related input name ends in `lowerBound` are inferred as `relative-date`; option values such as `-1M` remain opaque.
-* Related inputs whose final name segment is `path` or a numbered QueryBuilder path such as `0_path` are inferred as `path`. Authored path controls can be `one` or `many`, but the residual discovery `query.path` is always singular.
-* Tags inherit the same `choice` behavior as property controls.
-* Options are a closed vocabulary. ASC sends each option's `value`, localized `label`, and `disabled` state. The agent may reason from labels, but ASC accepts back only exact enabled values. Already-selected disabled values are preserved only by omitting that control update.
-* Unsupported or mixed input shapes are omitted from agent-writable `controls`; they are still serialized normally by the form and are not exposed as raw QueryBuilder fields.
+Predicate components that completely implement these public ASC interfaces participate
+automatically:
 
-Property predicate example:
+* `PropertyPredicate`, including tags and overlays backed by customer JCR properties
+* `DatePredicate`
+* `PathPredicate`
+* `FreeformTextPredicate`
+* `SortPredicate`
 
-```html
-<input type="hidden"
-  name="3_group.propertyvalues.property"
-  value="jcr:content/metadata/dc:format"
-  form="asset-share-commons__form-id__1"
-  data-asset-share-predicate-id="format"/>
-<input type="checkbox"
-  name="3_group.propertyvalues.0_values"
-  value="image/jpeg"
-  form="asset-share-commons__form-id__1"
-  for="format"/>
-```
+The built-in adapter reads the model's server-resolved current state, options, labels, cardinality,
+and constraints. It converts a validated agent state back to the same request parameters the
+component normally submits. The browser then navigates to that canonical URL, so the component's
+Sling Model server-renders the selected state just as it does after a manual search or refresh.
+The search bar's actual predicate name is also resolved server-side, preserving `ai-fulltext` on
+pages that enable ASC AI Search.
 
-Path predicate example:
+The mapping reproduces the component's actual form shape, including authored checkbox indexes,
+radio indexes, unindexed dropdown names, and repeated multiselect values. A custom adapter returns
+replacement parameters as `Map<String, List<String>>`; an equivalent but differently named
+QueryBuilder predicate is not sufficient for compatibility with request-aware customer
+processors.
 
-```html
-<input type="hidden"
-  name="4_group.p.or"
-  value="true"
-  form="asset-share-commons__form-id__1"
-  data-asset-share-predicate-id="location"/>
-<input type="checkbox"
-  name="4_group.0_path"
-  value="/content/dam/products"
-  form="asset-share-commons__form-id__1"
-  for="location"/>
-```
+Toggle, slider, and radio variants are exposed as one-valued controls, matching their rendered
+radio inputs. Checkbox variants remain many-valued. Sort option values are opaque request-local
+tokens so the agent never receives the underlying `orderby` JCR property.
 
-Discovery applies complete replacement state to existing controls by stable predicate ID. It does not create options or inputs for agent-generated values, and the agent cannot set sort, pagination, layout, type, hidden predicates, or arbitrary QueryBuilder parameters.
+An overlay of a standard predicate interface needs no discovery-specific HTML attributes or
+configuration when it supplies all required mapping information. In particular,
+`DatePredicate.getProperty()` must return a nonblank property. Its default `null` implementation
+keeps older bundles binary compatible, but such a date model is not agent-writable until it
+overrides the method or registers a custom adapter. A nonstandard model must expose `Predicate` as
+a Sling Model adapter type and register a public OSGi `DiscoveryControlAdapter` for its custom
+QueryBuilder parameter shape.
+Higher-ranked customer adapters can override the built-in adapter. The adapter must:
+
+* expose semantic IDs, labels, options, constraints, and current state without exposing component
+  resource paths, JCR property paths, QueryBuilder names, or HTML;
+* completely remove and replace the parameters owned by a mentioned control;
+* represent an explicit clear with an empty values state or null date bounds; and
+* never support `HiddenPredicate` or `PagePredicate`.
+
+Hidden and page predicates remain server-only. They are merged by the normal canonical ASC search
+after discovery resolution and are never agent-writable.
+
+ASC visits the current page component tree and automatically follows rendered Core Component
+Experience Fragment variations. A customer reference/include component that renders filters from
+another external resource tree can register a `DiscoveryModelRootProvider`; the returned roots are
+used only for server-side Sling Model adaptation and are never sent to the agent.
+
+See
+[`docs/discovery-agent-integration.md`](../../../../../../../../docs/discovery-agent-integration.md)
+for the request flow, SPI contract, and verification steps.
 
 ## cq:Component
 * Node names are lowercase and hyphenated

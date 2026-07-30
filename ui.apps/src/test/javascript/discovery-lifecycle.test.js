@@ -11,16 +11,23 @@
 var assert = require("assert"),
     fs = require("fs"),
     path = require("path"),
-    vm = require("vm");
+    vm = require("vm"),
+    SEARCH_SOURCE = fs.readFileSync(path.resolve(
+        __dirname,
+        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/search.js"
+    ), "utf8");
 
-function Collection(elements) {
+function Collection(elements, harness) {
     this.elements = elements || [];
     this.length = this.elements.length;
     this[0] = this.elements[0];
+    this.harness = harness;
 }
 
 Collection.prototype.add = function(collection) {
-    return new Collection(this.elements.concat(collection.elements || []));
+    return new Collection(this.elements.concat(collection.elements || []).filter(function(element, index, values) {
+        return values.indexOf(element) === index;
+    }), this.harness);
 };
 Collection.prototype.addClass = function() { return this; };
 Collection.prototype.appendTo = function() { return this; };
@@ -38,7 +45,6 @@ Collection.prototype.attr = function(name, value) {
 };
 Collection.prototype.empty = function() {
     this.elements.forEach(function(element) {
-        element.children = [];
         element.text = "";
     });
     return this;
@@ -46,38 +52,37 @@ Collection.prototype.empty = function() {
 Collection.prototype.filter = function(callback) {
     return new Collection(this.elements.filter(function(element, index) {
         return callback.call(element, index, element);
-    }));
+    }), this.harness);
 };
 Collection.prototype.find = function() {
-    return new Collection(searchInput ? [searchInput] : []);
+    if (this.elements[0] === this.harness.discoverySearch) {
+        return new Collection([this.harness.searchInput], this.harness);
+    }
+    if (this.elements[0] === this.harness.formElement) {
+        return new Collection([
+            this.harness.searchInput,
+            this.harness.customerInput
+        ], this.harness);
+    }
+    return new Collection([], this.harness);
 };
 Collection.prototype.first = function() {
-    return new Collection(this.length ? [this.elements[0]] : []);
+    return new Collection(this.length ? [this.elements[0]] : [], this.harness);
 };
 Collection.prototype.get = function() {
     return this.elements;
 };
-Collection.prototype.html = function(value) {
-    if (typeof value === "undefined") {
-        return this.length ? (this.elements[0].html || "") : "";
-    }
-    this.elements.forEach(function(element) {
-        var match = /data-asset-share-discovery-agent-response="([^"]*)"/.exec(value);
-        element.html = value;
-        element.discoveryAgentResponseRaw = match ? match[1].replace(/&quot;/g, "\"") : null;
-    });
-    return this;
+Collection.prototype.is = function(selector) {
+    return Boolean(this.length && selector === "input,textarea" &&
+        this.elements[0].attributes && this.elements[0].attributes.name);
 };
 Collection.prototype.keypress = function() { return this; };
 Collection.prototype.map = function(callback) {
     return new Collection(this.elements.map(function(element, index) {
         return callback.call(element, index, element);
-    }));
+    }), this.harness);
 };
-Collection.prototype.on = function(eventName, selector, handler) {
-    eventHandlers.push({eventName: eventName, selector: selector, handler: handler});
-    return this;
-};
+Collection.prototype.on = function() { return this; };
 Collection.prototype.removeClass = function() { return this; };
 Collection.prototype.text = function(value) {
     if (typeof value === "undefined") {
@@ -88,115 +93,112 @@ Collection.prototype.text = function(value) {
     });
     return this;
 };
-Collection.prototype.trigger = function() { return this; };
+Collection.prototype.trigger = function(eventName, values) {
+    this.harness.events.push({name: eventName, values: values});
+    return this;
+};
 Collection.prototype.val = function() {
     return this.length ? this.elements[0].value : undefined;
 };
 
-var eventHandlers = [],
-    searchInput = {
-        attributes: {name: "fulltext", form: "asset-share-commons__form-id__1"},
-        value: "/discovery find legal jpeg assets"
-    },
-    pathInput = {
-        attributes: {name: "9_group.0_path", form: "asset-share-commons__form-id__1", "for": "location"},
-        value: "/content/dam/campaigns"
-    },
-    discoveryMessage = {
-        attributes: {
-            "data-asset-share-query-title": "Discovery constraints",
-            "data-asset-share-residual-title": "Discovery constraints",
-            "data-asset-share-error-title": "Discovery unavailable",
-            "data-asset-share-error-message": "Try again"
-        },
-        children: []
-    },
-    discoveryOutput = {attributes: {}, children: []},
-    discoveryTitle = {attributes: {}, text: ""},
-    discoveryQueries = [],
-    submittedQueries = [],
-    addressBars = [],
-    appliedUpdates = [],
-    clearedControls = 0,
-    currentAction = null,
-    currentResidual = null;
-
-var AGENT_RESPONSE = {
-    version: 2,
-    query: {fulltext: "jpeg", path: "/content/dam/legal"},
-    controlUpdates: [
-        {id: "format", kind: "choice", state: {values: ["image/jpeg"]}},
-        {
-            id: "__asset_share_discovery_sort_orderby",
-            kind: "choice",
-            state: {values: ["jcr:content/metadata/dam:size"]}
-        }
-    ]
-};
-
-function discoveryResultsFragment() {
-    var escaped = JSON.stringify(AGENT_RESPONSE).replace(/"/g, "&quot;");
-
-    // Mirrors the real results.html markup: DiscoverySearchProviderImpl stashes the agent's raw
-    // response in Results#getAdditionalData(), and the HTL embeds it as a hidden data attribute in
-    // the results fragment for search.js to extract in this same round trip.
-    return "<section>results" +
-        "<div data-asset-share-id=\"discovery-agent-response\" " +
-        "data-asset-share-discovery-agent-response=\"" + escaped + "\"></div>" +
-        "</section>";
-}
-
-function promise(value) {
+function promise(failure) {
     return {
-        then: function(success) {
-            success(value);
+        then: function() {
             return this;
         },
-        fail: function() {
+        fail: function(callback) {
+            if (failure) {
+                callback();
+            }
             return this;
         }
     };
 }
 
-function jquery(value) {
-    if (typeof value !== "string") {
-        return new Collection(value ? [value] : []);
-    }
-    if (value === "body") {
-        return new Collection([{attributes: {}}]);
-    }
-    if (value.charAt(0) === "<") {
-        return new Collection([{attributes: {}, children: []}]);
-    }
-    if (value === "#asset-share-commons__form-id__1") {
-        return new Collection([{attributes: {id: "asset-share-commons__form-id__1"}}]);
-    }
-    if (value === "[form='asset-share-commons__form-id__1']") {
-        return new Collection([searchInput, pathInput]);
-    }
-    if (value === "button[form='asset-share-commons__form-id__1']" ||
-            value === "input[form='asset-share-commons__form-id__1']") {
-        return new Collection([]);
-    }
-    return new Collection([]);
-}
+function createHarness(response, requestFails, discoveryEnabled) {
+    var harness = {
+            response: response,
+            requestFails: requestFails,
+            events: [],
+            resolverCalls: [],
+            navigations: [],
+            manualSearches: 0,
+            formElement: {
+                attributes: {id: "asset-share-commons__form-id__1"}
+            },
+            discoverySearch: {attributes: {}},
+            searchInput: {
+                attributes: {name: "fulltext", form: "asset-share-commons__form-id__1"},
+                value: "/discovery find legal jpeg assets"
+            },
+            customerInput: {
+                attributes: {name: "customer", form: "asset-share-commons__form-id__1"},
+                value: "ordinary customer value"
+            },
+            discoveryMessage: {
+                attributes: {
+                    "data-asset-share-error-title": "Discovery unavailable",
+                    "data-asset-share-error-message": "Try again"
+                },
+                text: ""
+            },
+            discoveryOutput: {attributes: {}, text: ""},
+            discoveryTitle: {attributes: {}, text: ""}
+        },
+        jquery,
+        context;
 
-jquery.trim = function(value) {
-    return (value || "").trim();
-};
-jquery.get = function(url, query) {
-    submittedQueries.push({url: url, query: query});
-    return promise("<section>results</section>");
-};
-jquery.when = function(result) {
-    return result;
-};
+    function collection(elements) {
+        return new Collection(elements, harness);
+    }
 
-(function discoveryLifecycleUsesValidatedResidualState() {
-    var context = {
+    function jquery(value) {
+        if (typeof value !== "string") {
+            return collection(value ? [value] : []);
+        }
+        if (value === "body") {
+            return collection([{attributes: {}}]);
+        }
+        if (value.charAt(0) === "<") {
+            return collection([{attributes: {}}]);
+        }
+        if (value === "#asset-share-commons__form-id__1") {
+            return collection([harness.formElement]);
+        }
+        if (value === "[form='asset-share-commons__form-id__1']") {
+            return collection([harness.searchInput, harness.customerInput]);
+        }
+        return collection([]);
+    }
+
+    jquery.trim = function(value) {
+        return (value || "").trim();
+    };
+
+    context = {
         console: console,
+        document: {
+            createElement: function() {
+                var anchor = {};
+                Object.defineProperty(anchor, "href", {
+                    set: function(value) {
+                        var parsed = new URL(value, "https://example.com/content/search.html");
+                        anchor.protocol = parsed.protocol;
+                        anchor.host = parsed.host;
+                    }
+                });
+                return anchor;
+            }
+        },
         window: {
-            location: {pathname: "/content/search.html", search: ""},
+            location: {
+                href: "https://example.com/content/search.html",
+                pathname: "/content/search.html",
+                search: "",
+                assign: function(url) {
+                    harness.navigations.push(url);
+                }
+            },
             top: {location: {pathname: "/content/search.html"}},
             addEventListener: function() {}
         },
@@ -212,35 +214,30 @@ jquery.when = function(result) {
                 }
             },
             Elements: {
-                element: function(name, context) {
+                element: function(name) {
                     if (name === "form") {
-                        return new Collection([{attributes: {}}]);
+                        return collection([harness.formElement]);
+                    }
+                    if (name === "discovery-search") {
+                        return collection([harness.discoverySearch]);
                     }
                     if (name === "discovery-query") {
-                        return new Collection([discoveryMessage]);
+                        return collection([harness.discoveryMessage]);
                     }
                     if (name === "discovery-query-output") {
-                        return new Collection([discoveryOutput]);
+                        return collection([harness.discoveryOutput]);
                     }
                     if (name === "discovery-query-title") {
-                        return new Collection([discoveryTitle]);
+                        return collection([harness.discoveryTitle]);
                     }
-                    if (name === "discovery-agent-response") {
-                        var element = context && context.elements && context.elements[0];
-                        return element && element.discoveryAgentResponseRaw ?
-                            new Collection([{
-                                attributes: {
-                                    "data-asset-share-discovery-agent-response": element.discoveryAgentResponseRaw
-                                }
-                            }]) :
-                            new Collection([]);
-                    }
-                    return new Collection([]);
+                    return collection([]);
                 },
                 selector: function(name) {
                     return "[data-asset-share-id='" + name + "']";
                 },
-                update: function() {}
+                update: function() {
+                    throw new Error("discovery must not update result or filter DOM");
+                }
             },
             Events: {
                 SEARCH_BEGIN: "begin",
@@ -248,75 +245,40 @@ jquery.when = function(result) {
                 SEARCH_INVALID: "invalid"
             },
             Navigation: {
-                addressBar: function(url) {
-                    addressBars.push(url);
-                },
+                addressBar: function() {},
                 gotoTop: function() {},
                 returnUrl: function() {}
             },
             Search: {
-                DiscoveryControls: {
-                    validateResponse: function(response) {
-                        return typeof response === "string" ? JSON.parse(response) : response;
-                    }
-                },
                 Form: function() {
                     return {
                         id: function() {
                             return "asset-share-commons__form-id__1";
                         },
-                        serializeDiscoveryContextFor: function(action, reset, removeNames, residual) {
-                            currentResidual = residual;
-                            return JSON.stringify({
-                                query: {
-                                    fulltext: residual.fulltext,
-                                    path: residual.path,
-                                    allowedPathRoots: ["/content/dam"]
-                                },
-                                controls: []
-                            });
-                        },
-                        applyDiscoveryControlUpdates: function(updates) {
-                            appliedUpdates.push(updates);
-                        },
-                        clearDiscoveryControls: function() {
-                            clearedControls += 1;
-                        },
-                        serializeDiscoveryStateFor: function(residual, action) {
-                            currentAction = action;
-                            return "fulltext=" + encodeURIComponent(residual.fulltext || "") +
-                                "&path=" + encodeURIComponent(residual.path || "") +
-                                "&action=" + action;
-                        },
-                        serializeFor: function(action) {
-                            return "action=" + action;
-                        },
-                        isApplyingDiscoveryControls: function() {
-                            return false;
-                        },
-                        isPathControl: function(id) {
-                            return id === "location";
+                        serializeDiscoveryStateFor: function(action, removeNames) {
+                            harness.serialized = {
+                                action: action,
+                                removeNames: removeNames
+                            };
+                            return "4_group.propertyvalues.0_values=image%2Fpng" +
+                                "&customer=one&customer=two&p.offset=24";
                         },
                         isValid: function() {
                             return true;
                         },
-                        submit: function(action, reset, success) {
-                            success("<section>results</section>");
+                        isDiscoveryEnabled: function() {
+                            return discoveryEnabled !== false;
+                        },
+                        submit: function() {
+                            harness.manualSearches += 1;
                             return true;
                         },
-                        submitQuery: function(query, success) {
-                            submittedQueries.push({query: query});
-                            success("<section>results</section>");
-                            return promise();
-                        },
-                        submitDiscoveryQuery: function(prompt, contextJson, baselineQuery, success) {
-                            discoveryQueries.push({
-                                prompt: prompt,
-                                context: contextJson,
-                                baselineQuery: baselineQuery
-                            });
-                            success(discoveryResultsFragment());
-                            return promise();
+                        submitDiscoveryResolution: function(prompt, baseline, success) {
+                            harness.resolverCalls.push({prompt: prompt, baseline: baseline});
+                            if (!requestFails) {
+                                success(response);
+                            }
+                            return promise(requestFails);
                         }
                     };
                 }
@@ -331,37 +293,78 @@ jquery.when = function(result) {
 
     context.$ = jquery;
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.resolve(
-        __dirname,
-        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/search.js"
-    ), "utf8"), context);
-    context.AssetShare.Search.DiscoveryControls = {
-        validateResponse: function(response) {
-            return typeof response === "string" ? JSON.parse(response) : response;
-        }
-    };
+    vm.runInContext(SEARCH_SOURCE, context);
+    harness.search = context.AssetShare.Search;
+    return harness;
+}
 
-    context.AssetShare.Search.search({preventDefault: function() {}});
+(function navigatesToCanonicalSameOriginUrl() {
+    var harness = createHarness({
+        version: 1,
+        redirectUrl: "/content/search.html?4_group.propertyvalues.0_values=image%2Fjpeg&p.offset=0"
+    }, false);
 
-    assert.strictEqual(discoveryQueries.length, 1, "initial discovery calls the agent in a single round trip");
-    assert.strictEqual(clearedControls, 1, "discovery clears writable controls before snapshot");
-    assert.deepStrictEqual(appliedUpdates[0][0].state.values, ["image/jpeg"]);
-    assert.deepStrictEqual(appliedUpdates[0][1].state.values, ["jcr:content/metadata/dam:size"]);
-    assert.ok(discoveryQueries[0].prompt, "the agent request carries the parsed /discovery prompt");
-    assert.ok(addressBars[addressBars.length - 1].indexOf("path=%2Fcontent%2Fdam%2Flegal") > -1,
-        "the deep-link address bar reflects the agent-resolved residual path, synced after control apply");
+    harness.search.search({preventDefault: function() {}});
 
-    context.AssetShare.Search.search({preventDefault: function() {}});
-    assert.strictEqual(discoveryQueries.length, 2, "discovery submit asks the agent for fresh control state");
-    assert.strictEqual(clearedControls, 2);
+    assert.strictEqual(harness.resolverCalls.length, 1);
+    assert.strictEqual(harness.resolverCalls[0].prompt, "find legal jpeg assets");
+    assert.ok(harness.resolverCalls[0].baseline.indexOf("customer=one&customer=two") > -1,
+        "current customer parameters are submitted to the resolver");
+    assert.deepStrictEqual(harness.serialized.removeNames, ["fulltext"],
+        "the /discovery command field is excluded from the submitted search state");
+    assert.deepStrictEqual(harness.navigations, [
+        "/content/search.html?4_group.propertyvalues.0_values=image%2Fjpeg&p.offset=0"
+    ]);
+    assert.strictEqual(harness.events[0].name, "begin");
+}());
 
-    eventHandlers.filter(function(handler) {
-        return handler.selector === "[for][form=\"asset-share-commons__form-id__1\"]";
-    })[0].handler.call(pathInput);
+(function rejectsCrossOriginRedirect() {
+    var harness = createHarness({
+        version: 1,
+        redirectUrl: "https://attacker.example/content/search.html"
+    }, false);
 
-    context.AssetShare.Search.loadMore({preventDefault: function() {}});
-    assert.strictEqual(currentAction, "load-more");
-    assert.strictEqual(currentResidual.path, null);
+    harness.search.search({preventDefault: function() {}});
+
+    assert.deepStrictEqual(harness.navigations, []);
+    assert.ok(harness.events.some(function(event) {
+        return event.name === "invalid";
+    }));
+    assert.strictEqual(harness.discoveryOutput.text, "Try again");
+}());
+
+(function staysOnPageWhenResolverFails() {
+    var harness = createHarness(null, true);
+
+    harness.search.search({preventDefault: function() {}});
+
+    assert.deepStrictEqual(harness.navigations, []);
+    assert.strictEqual(harness.discoveryTitle.text, "Discovery unavailable");
+    assert.strictEqual(harness.discoveryOutput.text, "Try again");
+}());
+
+(function failsClearlyWhenDiscoveryIsNotConfigured() {
+    var harness = createHarness(null, false, false);
+
+    harness.search.search({preventDefault: function() {}});
+
+    assert.deepStrictEqual(harness.navigations, []);
+    assert.strictEqual(harness.resolverCalls.length, 0);
+    assert.strictEqual(harness.discoveryTitle.text, "Discovery unavailable");
+    assert.ok(harness.events.some(function(event) {
+        return event.name === "invalid";
+    }));
+}());
+
+(function ignoresDiscoveryTextInNonCommandFields() {
+    var harness = createHarness(null, false);
+
+    harness.searchInput.value = "ordinary search";
+    harness.customerInput.value = "/discovery is a legitimate customer value";
+    harness.search.search({preventDefault: function() {}});
+
+    assert.strictEqual(harness.resolverCalls.length, 0);
+    assert.strictEqual(harness.manualSearches, 1);
 }());
 
 console.log("discovery lifecycle tests passed");

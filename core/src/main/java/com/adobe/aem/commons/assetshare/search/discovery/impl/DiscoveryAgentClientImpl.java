@@ -62,9 +62,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Default {@link DiscoveryAgentClient} implementation.
  *
  * IMS-authenticated HTTP calling logic (obtains a bearer token via the configured
- * {@code AccessTokenProvider} and issues the agent request), consumed by
- * {@code DiscoverySearchProviderImpl} -- the single SearchProvider-based, single round-trip
- * discovery flow.
+ * {@code AccessTokenProvider} and issues the agent request), consumed by the page-scoped
+ * discovery resolver.
  */
 @Component(service = DiscoveryAgentClient.class)
 @Designate(ocd = DiscoveryAgentClientImpl.Config.class)
@@ -301,7 +300,7 @@ public class DiscoveryAgentClientImpl implements DiscoveryAgentClient {
     public @interface Config {
         @AttributeDefinition(
                 name = "Agent endpoint",
-                description = "Absolute HTTP endpoint that accepts prompt and context form fields."
+                description = "Absolute HTTP endpoint that accepts the discovery v2 JSON contract."
         )
         String agent_endpoint() default "";
 

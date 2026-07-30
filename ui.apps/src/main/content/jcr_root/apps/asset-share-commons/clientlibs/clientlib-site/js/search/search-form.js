@@ -1,7 +1,7 @@
 /*
  * Asset Share Commons
  *
- * Copyright [2017]  Adobe
+ * Copyright [2017] Adobe
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,14 +13,11 @@ AssetShare.Search.Form = function (ns) {
     "use strict";
 
     var url,
-        mode,
-        formData,
-        SORT_ORDERBY_CONTROL_ID = "__asset_share_discovery_sort_orderby",
-        SORT_DIRECTION_CONTROL_ID = "__asset_share_discovery_sort_direction",
-        applyingDiscoveryControls = false;
+        discoveryUrl,
+        formData;
 
     function getId() {
-       return "asset-share-commons__form-id__1";
+        return "asset-share-commons__form-id__1";
     }
 
     function _htmlForm() {
@@ -31,6 +28,39 @@ AssetShare.Search.Form = function (ns) {
         return url;
     }
 
+    function isSameOriginPath(value) {
+        return typeof value === "string" && value.charAt(0) === "/" && value.charAt(1) !== "/";
+    }
+
+    function resolveDiscoveryUrl(formElement) {
+        var configured = ns.Data.attr(formElement, "discovery-action"),
+            enabled = String(ns.Data.attr(formElement, "discovery-enabled") || "").toLowerCase(),
+            contract = String(ns.Data.attr(formElement, "discovery-contract") || ""),
+            pageAction;
+
+        if (enabled === "false") {
+            return "";
+        }
+        if (isSameOriginPath(configured)) {
+            return configured;
+        }
+        if (contract === "1") {
+            return "";
+        }
+
+        // Compatibility for results-component overlays copied before discovery-action existed.
+        pageAction = formElement.attr("action") || "";
+        pageAction = pageAction.split(/[?#]/)[0];
+        if (!isSameOriginPath(pageAction) || !/\.html$/.test(pageAction)) {
+            return "";
+        }
+        return pageAction.replace(/\.html$/, ".discovery.json");
+    }
+
+    function isDiscoveryEnabled() {
+        return Boolean(discoveryUrl);
+    }
+
     function reset() {
         formData = new ns.FormData(_htmlForm());
     }
@@ -38,7 +68,7 @@ AssetShare.Search.Form = function (ns) {
     function clean(sourceFormData) {
         var cleanFormData = new ns.FormData();
 
-        sourceFormData.forEach(function (inputName, inputValue) {
+        sourceFormData.forEach(function(inputName, inputValue) {
             var candidateInputs = $("[name=\"" + inputName + "\"][form=\"" + getId() + "\"]");
 
             candidateInputs.each(function() {
@@ -46,21 +76,27 @@ AssetShare.Search.Form = function (ns) {
                     candidatePredicateId = ns.Data.attr(candidateInput, "predicate-id") || null,
                     candidateInputAdded = false;
 
-               if (candidatePredicateId) {
-                    $("[for=\"" + candidatePredicateId + "\"]").each(function (index, relatedInput) {
-                        if (!candidateInputAdded) {
-                            var relativeInputName = $(relatedInput).attr("name"),
-                                relatedInputValue = sourceFormData.get(relativeInputName);
-                            if (relatedInputValue) {
-                                if (cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
-                                    cleanFormData.add(inputName, inputValue);
-                                }
-                                candidateInputAdded = true;
+                if (candidatePredicateId) {
+                    $("[for=\"" + candidatePredicateId + "\"]").each(function(index, relatedInput) {
+                        var relativeInputName,
+                            relatedInputValue;
+
+                        if (candidateInputAdded) {
+                            return;
+                        }
+
+                        relativeInputName = $(relatedInput).attr("name");
+                        relatedInputValue = sourceFormData.get(relativeInputName);
+                        if (relatedInputValue) {
+                            if (cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
+                                cleanFormData.add(inputName, inputValue);
                             }
+                            candidateInputAdded = true;
                         }
                     });
-                } else if (inputValue !== '' && cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
-                   cleanFormData.add(inputName, inputValue);
+                } else if (inputValue !== "" &&
+                        cleanFormData.getAll(inputName).indexOf(inputValue) === -1) {
+                    cleanFormData.add(inputName, inputValue);
                 }
             });
         });
@@ -75,11 +111,12 @@ AssetShare.Search.Form = function (ns) {
     }
 
     function applyActionFields(targetFormData, event) {
-        $("[data-asset-share-search-actions]").each(function () {
+        $("[data-asset-share-search-actions]").each(function() {
             removeAll(targetFormData, $(this).attr("name"));
         });
 
-        $("[data-asset-share-search-actions*=\"all\"],[data-asset-share-search-actions*=\"" + event + "\"]").each(function () {
+        $("[data-asset-share-search-actions*=\"all\"]," +
+                "[data-asset-share-search-actions*=\"" + event + "\"]").each(function() {
             if ($.trim($(this).val()) !== "") {
                 targetFormData.set($(this).attr("name"), $(this).val());
             }
@@ -137,541 +174,14 @@ AssetShare.Search.Form = function (ns) {
         return applyActionFields(deserialize(query), event).serialize();
     }
 
-    function isPathInput(input) {
-        var name = input.attr("name") || "",
-            segments = name.split(".");
-
-        return /^(?:\d+_)?path$/.test(segments[segments.length - 1]);
-    }
-
-    function getInputLabel(input) {
-        var inputElement = $(input),
-            label;
-
-        if (inputElement.attr("id")) {
-            label = $("label[for=\"" + inputElement.attr("id") + "\"]").first().text();
-        }
-
-        if (!label) {
-            label = inputElement.closest(".checkbox").find("label").first().text();
-        }
-
-        return $.trim(label || "");
-    }
-
-    function getPredicateTitle(predicateId, relatedInputs) {
-        var title = relatedInputs.closest(".content").prev(".title").first().text();
-
-        if (!title) {
-            title = relatedInputs.closest(".accordion").find(".title").first().text();
-        }
-
-        return $.trim(title || predicateId).replace(/\s+/g, " ");
-    }
-
-    function getDelimiter(predicateFields) {
-        var delimiterField = predicateFields.filter(function() {
-            return /_delimiter$/.test($(this).attr("name") || "");
-        }).first();
-
-        return delimiterField.length ? delimiterField.val() : ",";
-    }
-
-    function splitValues(value, delimiter) {
-        return (value || "").split(delimiter || ",").map(function(item) {
-            return $.trim(item);
-        }).filter(function(item, index, values) {
-            return item && values.indexOf(item) === index;
-        });
-    }
-
-    function readChoiceValues(relatedInputs) {
-        var values = [];
-
-        relatedInputs.each(function(index, input) {
-            var inputElement = $(input),
-                value;
-
-            if (inputElement.is("select")) {
-                value = inputElement.val();
-                if (Array.isArray(value)) {
-                    values = values.concat(value.filter(Boolean));
-                } else if (value) {
-                    values.push(value);
-                }
-            } else if (inputElement.is(":checkbox,:radio") && inputElement.is(":checked")) {
-                values.push(inputElement.val());
-            }
-        });
-
-        return values.filter(function(value, index) {
-            return values.indexOf(value) === index;
-        });
-    }
-
-    function getPredicateOptions(relatedInputs) {
-        var options = [];
-
-        relatedInputs.each(function(index, input) {
-            var inputElement = $(input),
-                type = inputElement.attr("type") || input.tagName.toLowerCase();
-
-            if (inputElement.is("select")) {
-                inputElement.find("option").each(function(optionIndex, option) {
-                    var optionElement = $(option);
-
-                    if ($.trim(optionElement.val()) !== "") {
-                        options.push({
-                            value: optionElement.val(),
-                            label: $.trim(optionElement.text()).replace(/\s+/g, " "),
-                            disabled: optionElement.is(":disabled")
-                        });
-                    }
-                });
-            } else if (type === "checkbox" || type === "radio") {
-                options.push({
-                    value: inputElement.val(),
-                    label: getInputLabel(input),
-                    disabled: inputElement.is(":disabled")
-                });
-            }
-        });
-
-        return options;
-    }
-
-    function readHtmlConstraints(input, delimiter) {
-        var constraints = {},
-            maxValues = input.attr("data-asset-share-max-values");
-
-        if (input.attr("required")) {
-            constraints.required = true;
-        }
-        if (input.attr("minlength")) {
-            constraints.minLength = parseInt(input.attr("minlength"), 10);
-        }
-        if (input.attr("maxlength")) {
-            constraints.maxLength = parseInt(input.attr("maxlength"), 10);
-        }
-        if (input.attr("pattern")) {
-            constraints.pattern = input.attr("pattern");
-        }
-        if (maxValues) {
-            constraints.maxValues = parseInt(maxValues, 10);
-        }
-        if (delimiter) {
-            constraints.delimited = true;
-        }
-
-        return constraints;
-    }
-
-    function controlKind(relatedInputs) {
-        var pathInputs = relatedInputs.filter(function() {
-                return isPathInput($(this));
-            }),
-            lowerInputs = relatedInputs.filter(function() {
-                return /\.lowerBound$/.test($(this).attr("name") || "");
-            }),
-            upperInputs = relatedInputs.filter(function() {
-                return /\.upperBound$/.test($(this).attr("name") || "");
-            }),
-            choiceInputs = relatedInputs.filter(function() {
-                return $(this).is("select,:checkbox,:radio");
-            }),
-            textInputs = relatedInputs.filter(function() {
-                return $(this).is("input,textarea") && !$(this).is(":checkbox,:radio");
-            });
-
-        if (pathInputs.length && choiceInputs.length === pathInputs.length) {
-            return "path";
-        }
-        if (lowerInputs.length && !lowerInputs.first().is("select,:checkbox,:radio")) {
-            return "date-range";
-        }
-        if (lowerInputs.length && choiceInputs.length === relatedInputs.length) {
-            return "relative-date";
-        }
-        if (choiceInputs.length === relatedInputs.length && relatedInputs.length) {
-            return "choice";
-        }
-        if (textInputs.length === relatedInputs.length && textInputs.length === 1 && !upperInputs.length) {
-            return "text";
-        }
-
-        return null;
-    }
-
-    function cardinalityFor(kind, relatedInputs) {
-        var first = relatedInputs.first();
-
-        if (kind === "text" || kind === "date-range") {
-            return null;
-        }
-        if (first.is(":radio")) {
-            return "one";
-        }
-        if (first.is("select")) {
-            return first.prop("multiple") ? "many" : "one";
-        }
-        return "many";
-    }
-
-    function descriptorFor(predicateId) {
-        var predicateFields = $("[data-asset-share-predicate-id=\"" + predicateId +
-                "\"][form=\"" + getId() + "\"]"),
-            relatedInputs = $(":input[for=\"" + predicateId + "\"][form=\"" + getId() + "\"]"),
-            kind = controlKind(relatedInputs),
-            descriptor,
-            delimiter,
-            textInput,
-            lowerInput,
-            upperInput;
-
-        if (!kind) {
-            return null;
-        }
-
-        descriptor = {
-            id: predicateId,
-            title: getPredicateTitle(predicateId, relatedInputs),
-            kind: kind
-        };
-
-        if (kind === "choice" || kind === "path" || kind === "relative-date") {
-            descriptor.cardinality = cardinalityFor(kind, relatedInputs);
-            descriptor.state = {values: readChoiceValues(relatedInputs)};
-            descriptor.options = getPredicateOptions(relatedInputs);
-        } else if (kind === "text") {
-            delimiter = getDelimiter(predicateFields);
-            textInput = relatedInputs.first();
-            descriptor.state = {values: splitValues(textInput.val(), delimiter)};
-            descriptor.constraints = readHtmlConstraints(textInput, delimiter);
-        } else if (kind === "date-range") {
-            lowerInput = relatedInputs.filter(function() {
-                return /\.lowerBound$/.test($(this).attr("name") || "");
-            }).first();
-            upperInput = relatedInputs.filter(function() {
-                return /\.upperBound$/.test($(this).attr("name") || "");
-            }).first();
-            descriptor.state = {
-                lowerBound: lowerInput.val() || null,
-                upperBound: upperInput.val() || null
-            };
-            descriptor.constraints = {format: "YYYY-MM-DD"};
-        }
-
-        return descriptor;
-    }
-
-    function getDiscoveryControls() {
-        var controls = [],
-            seen = {};
-
-        $("[data-asset-share-predicate-id][form=\"" + getId() + "\"]").each(function(index, element) {
-            var predicateId = ns.Data.attr($(element), "predicate-id"),
-                descriptor;
-
-            if (!predicateId || seen[predicateId]) {
-                return;
-            }
-            seen[predicateId] = true;
-            descriptor = descriptorFor(predicateId);
-            if (descriptor) {
-                controls.push(descriptor);
-            }
-        });
-
-        return controls;
-    }
-
-    function getAllowedPathRoots() {
-        return $("[data-asset-share-discovery-allowed-path-root]").map(function() {
-            return $(this).attr("data-asset-share-discovery-allowed-path-root");
-        }).get().filter(Boolean);
-    }
-
-    function getSortInput(name) {
-        return $("[data-asset-share-id=\"sort\"][name=\"" + name + "\"][form=\"" + getId() + "\"]").first();
-    }
-
-    function getSortOptions(input) {
-        var options = [];
-
-        input.closest(".ui.dropdown").find(".item").each(function(index, item) {
-            var option = $(item),
-                value = option.attr("data-value");
-
-            if (!value) {
-                return;
-            }
-
-            options.push({
-                value: value,
-                label: $.trim(option.text()).replace(/\s+/g, " "),
-                disabled: option.is(":disabled")
-            });
-        });
-
-        return options;
-    }
-
-    function getDiscoverySortControls() {
-        var orderByInput = getSortInput("orderby"),
-            directionInput = getSortInput("orderby.sort"),
-            options,
-            directions;
-
-        if (!orderByInput.length || !directionInput.length) {
-            return [];
-        }
-
-        options = getSortOptions(orderByInput);
-        directions = getSortOptions(directionInput);
-        if (!options.length || !directions.length) {
-            return [];
-        }
-
-        return [
-            {
-                id: SORT_ORDERBY_CONTROL_ID,
-                title: "SORT BY",
-                kind: "choice",
-                cardinality: "one",
-                state: {values: orderByInput.val() ? [orderByInput.val()] : []},
-                options: options
-            },
-            {
-                id: SORT_DIRECTION_CONTROL_ID,
-                title: "SORT DIRECTION",
-                kind: "choice",
-                cardinality: "one",
-                state: {values: directionInput.val() ? [directionInput.val()] : []},
-                options: directions
-            }
-        ];
-    }
-
-    function getResidualQueryFromForm(removeKeys) {
-        var current = buildFormData(formData, "search"),
-            fulltext = current.get("fulltext") || null,
-            path = current.get("path") || null;
-
-        removeKeys = removeKeys || [];
-        if (removeKeys.indexOf("fulltext") > -1 || /^\/discovery(?:\s|$)/.test($.trim(fulltext || ""))) {
-            fulltext = null;
-        }
-        if (removeKeys.indexOf("path") > -1) {
-            path = null;
-        }
-
-        return {
-            fulltext: fulltext,
-            path: path
-        };
-    }
-
-    function serializeDiscoveryContextFor(event, resetForm, removeKeys, residualQuery) {
-        var query,
-            context;
-
-        if (resetForm) {
-            reset();
-        }
-
-        query = residualQuery || getResidualQueryFromForm(removeKeys);
-
-        context = {
-            query: {
-                fulltext: query.fulltext || null,
-                path: query.path || null,
-                allowedPathRoots: getAllowedPathRoots()
-            },
-            controls: getDiscoveryControls().concat(getDiscoverySortControls())
-        };
-
-        return JSON.stringify(context);
-    }
-
-    function getMatchingOptionValues(input, values) {
-        var availableValues = input.find("option").map(function() {
-            return $(this).val();
-        }).get();
-
-        return values.filter(function(value) {
-            return availableValues.indexOf(value) > -1;
-        });
-    }
-
-    function syncDropdown(input, values) {
-        var dropdown = input.closest(".ui.dropdown"),
-            selected = input.prop("multiple") ? values : values[0];
-
-        if (!dropdown.length || !dropdown.attr("data-asset-share-processed") ||
-                typeof dropdown.dropdown !== "function") {
-            return;
-        }
-
-        dropdown.dropdown("clear");
-        if (values.length) {
-            dropdown.dropdown("set selected", selected);
-        }
-    }
-
-    function applyValuesState(relatedInputs, values) {
-        relatedInputs.each(function(index, input) {
-            var inputElement = $(input),
-                matchingValues;
-
-            if (inputElement.is("select")) {
-                matchingValues = getMatchingOptionValues(inputElement, values);
-                inputElement.val(inputElement.prop("multiple") ? matchingValues : matchingValues[0] || "");
-                syncDropdown(inputElement, matchingValues);
-            } else if (inputElement.is(":checkbox,:radio")) {
-                inputElement.prop("checked", values.indexOf(inputElement.val()) > -1);
-            } else {
-                inputElement.val(values.join(getDelimiter(
-                    $("[data-asset-share-predicate-id=\"" + inputElement.attr("for") +
-                    "\"][form=\"" + getId() + "\"]")
-                )));
-            }
-        });
-    }
-
-    function expandDiscoveryControl(relatedInputs) {
-        var content = relatedInputs.closest(".content").first(),
-            title = content.prev(".title").first();
-
-        if (!content.length || !title.length) {
-            return;
-        }
-
-        title.addClass("active");
-        content.addClass("active").show();
-    }
-
-    function applyDiscoveryControlUpdates(updates, expandUpdatedControls) {
-        applyingDiscoveryControls = true;
-        expandUpdatedControls = expandUpdatedControls !== false;
-        try {
-            (updates || []).forEach(function(update) {
-                var relatedInputs = $(":input[for=\"" + update.id + "\"][form=\"" + getId() + "\"]"),
-                    lowerInput,
-                    upperInput;
-
-                if (update.id === SORT_ORDERBY_CONTROL_ID || update.id === SORT_DIRECTION_CONTROL_ID) {
-                    applyDiscoverySortControlUpdate(update);
-                    return;
-                }
-
-                if (update.kind === "date-range") {
-                    lowerInput = relatedInputs.filter(function() {
-                        return /\.lowerBound$/.test($(this).attr("name") || "");
-                    }).first();
-                    upperInput = relatedInputs.filter(function() {
-                        return /\.upperBound$/.test($(this).attr("name") || "");
-                    }).first();
-                    lowerInput.val(update.state.lowerBound || "");
-                    upperInput.val(update.state.upperBound || "");
-                } else {
-                    applyValuesState(relatedInputs, update.state.values || []);
-                }
-
-                if (expandUpdatedControls) {
-                    expandDiscoveryControl(relatedInputs);
-                }
-            });
-            reset();
-        } finally {
-            applyingDiscoveryControls = false;
-        }
-    }
-
-    function getMatchingSortOption(input, value) {
-        return input.closest(".ui.dropdown").find(".item").filter(function() {
-            return $(this).attr("data-value") === value;
-        }).first();
-    }
-
-    function applyDiscoverySortUpdate(sort) {
-        var orderByInput,
-            directionInput,
-            caseInput,
-            option;
-
-        if (!sort) {
-            return;
-        }
-
-        orderByInput = getSortInput("orderby");
-        directionInput = getSortInput("orderby.sort");
-        if (!orderByInput.length || !directionInput.length) {
-            return;
-        }
-
-        orderByInput.val(sort.orderby);
-        directionInput.val(sort.direction);
-        syncDropdown(orderByInput, [sort.orderby]);
-        syncDropdown(directionInput, [sort.direction]);
-
-        caseInput = getSortInput("orderby.case");
-        if (caseInput.length) {
-            option = getMatchingSortOption(orderByInput, sort.orderby);
-            caseInput.val(option.length &&
-                typeof option.attr("data-asset-share-sort-case-sensitive") !== "undefined" ? "" : "ignore");
-        }
-    }
-
-    function applyDiscoverySortControlUpdate(update) {
-        var values = update.state && update.state.values || [],
-            value = values[0],
-            sort = {};
-
-        if (!value) {
-            return;
-        }
-
-        if (update.id === SORT_ORDERBY_CONTROL_ID) {
-            sort.orderby = value;
-            sort.direction = getSortInput("orderby.sort").val();
-        } else {
-            sort.orderby = getSortInput("orderby").val();
-            sort.direction = value;
-        }
-
-        applyDiscoverySortUpdate(sort);
-    }
-
-    function clearDiscoveryControls() {
-        applyDiscoveryControlUpdates(getDiscoveryControls().map(function(control) {
-            return {
-                id: control.id,
-                kind: control.kind,
-                state: control.kind === "date-range" ?
-                    {lowerBound: null, upperBound: null} :
-                    {values: []}
-            };
-        }), false);
-    }
-
-    function isApplyingDiscoveryControls() {
-        return applyingDiscoveryControls;
-    }
-
-    function isPathControl(predicateId) {
-        var descriptor = predicateId ? descriptorFor(predicateId) : null;
-
-        return descriptor && descriptor.kind === "path";
-    }
-
-    function serializeDiscoveryStateFor(residualQuery, event, discoveryCommandFieldNames) {
+    function serializeDiscoveryStateFor(event, discoveryCommandFieldNames) {
         var clone;
 
         reset();
         clone = clean(formData.clone());
         clone = _adjustFormData(clone);
 
-        $("[data-asset-share-search-actions]").each(function () {
+        $("[data-asset-share-search-actions]").each(function() {
             removeAll(clone, $(this).attr("name"));
         });
 
@@ -679,18 +189,7 @@ AssetShare.Search.Form = function (ns) {
             removeAll(clone, name);
         });
 
-        removeAll(clone, "fulltext");
-        removeAll(clone, "path");
-
-        if (residualQuery && residualQuery.fulltext !== null) {
-            clone.set("fulltext", residualQuery.fulltext);
-        }
-        if (residualQuery && residualQuery.path !== null) {
-            clone.set("path", residualQuery.path);
-        }
-
         applyActionFields(clone, event);
-
         return clone.serialize();
     }
 
@@ -702,7 +201,6 @@ AssetShare.Search.Form = function (ns) {
         }
 
         removeKeys = removeKeys || [];
-
         buildFormData(formData, event).getAll().forEach(function(field) {
             if (removeKeys.indexOf(field.name) > -1) {
                 return;
@@ -737,23 +235,23 @@ AssetShare.Search.Form = function (ns) {
             visible = true;
 
         formData.getAll().forEach(function(formEntry) {
-           var inputElement = $('[name="' + formEntry.name + '"][form="' + getId() + '"]'),
-               inputElementValid,
-               inputElementValidationMessage;
+            var inputElement = $('[name="' + formEntry.name + '"][form="' + getId() + '"]'),
+                inputElementValid,
+                inputElementValidationMessage;
 
-           if (inputElement && inputElement[0] && typeof inputElement[0].checkValidity === "function") {
-               inputElementValid = inputElement[0].checkValidity();
-
-               if (!inputElementValid) {
-                   valid = false;
-                   visible = visible && inputElement.is(":visible");
-
-                   inputElementValidationMessage = inputElement.data("asset-share-input-validation-message");
-                   if (inputElementValidationMessage) {
-                       inputElement[0].setCustomValidity(inputElementValidationMessage);
-                   }
-               }
-           }
+            if (inputElement && inputElement[0] &&
+                    typeof inputElement[0].checkValidity === "function") {
+                inputElementValid = inputElement[0].checkValidity();
+                if (!inputElementValid) {
+                    valid = false;
+                    visible = visible && inputElement.is(":visible");
+                    inputElementValidationMessage =
+                        inputElement.data("asset-share-input-validation-message");
+                    if (inputElementValidationMessage) {
+                        inputElement[0].setCustomValidity(inputElementValidationMessage);
+                    }
+                }
+            }
         });
 
         if (!valid && visible) {
@@ -782,25 +280,21 @@ AssetShare.Search.Form = function (ns) {
         return $.when($.get(getUrl(), query)).then(success);
     }
 
-    function submitDiscoveryQuery(prompt, contextJson, residualQueryString, success) {
-        // residualQueryString is an already-serialized ("a=b&c=d") baseline query (mode, layout,
-        // sort, p.offset, any residual fulltext/path from a prior discovery turn, etc.), produced the
-        // same way a manually-driven rail search would be. prompt/context are appended so
-        // DiscoverySearchProviderImpl can resolve, translate and execute the real search server-side
-        // in this single request -- no second, separate call is made to fetch results.
-        var query = (residualQueryString ? residualQueryString + "&" : "") +
-            "prompt=" + encodeURIComponent(prompt) +
-            "&context=" + encodeURIComponent(contextJson);
+    function submitDiscoveryResolution(prompt, currentState, success) {
+        var query = (currentState ? currentState + "&" : "") +
+            "prompt=" + encodeURIComponent(prompt);
 
-        // POST -- the serialized rail context can be arbitrarily large (every control's full option
-        // list), which would risk exceeding URL length limits on GET.
-        return $.when($.post(getUrl(), query)).then(success);
+        if (!discoveryUrl) {
+            return $.Deferred().reject().promise();
+        }
+        return $.when($.post(discoveryUrl, query)).then(success);
     }
 
     function init() {
-        url = ns.Data.attr(ns.Elements.element("form"), "action");
-        mode = ns.Data.val("mode");
+        var formElement = ns.Elements.element("form");
 
+        url = ns.Data.attr(formElement, "action");
+        discoveryUrl = resolveDiscoveryUrl(formElement);
         reset();
     }
 
@@ -811,17 +305,12 @@ AssetShare.Search.Form = function (ns) {
         serializeFor: serializeFor,
         serializeQueryFor: serializeQueryFor,
         serializeDiscoveryStateFor: serializeDiscoveryStateFor,
-        applyDiscoveryControlUpdates: applyDiscoveryControlUpdates,
-        applyDiscoverySortUpdate: applyDiscoverySortUpdate,
-        clearDiscoveryControls: clearDiscoveryControls,
-        isApplyingDiscoveryControls: isApplyingDiscoveryControls,
-        isPathControl: isPathControl,
         serializeJsonFor: serializeJsonFor,
-        serializeDiscoveryContextFor: serializeDiscoveryContextFor,
         id: getId,
         submit: submit,
         submitQuery: submitQuery,
-        submitDiscoveryQuery: submitDiscoveryQuery,
+        submitDiscoveryResolution: submitDiscoveryResolution,
+        isDiscoveryEnabled: isDiscoveryEnabled,
         isValid: isValid
     };
 };

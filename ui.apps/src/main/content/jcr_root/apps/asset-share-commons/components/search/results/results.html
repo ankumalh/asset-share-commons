@@ -17,28 +17,21 @@
  */-->
 
 <sly    data-sly-use.modelCache="com.adobe.aem.commons.assetshare.util.ModelCache"
+        data-sly-use.discovery="com.adobe.aem.commons.assetshare.search.discovery.DiscoveryConfiguration"
         data-sly-set.config="${modelCache['com.adobe.aem.commons.assetshare.configuration.Config']}"
         data-sly-set.search="${modelCache['com.adobe.aem.commons.assetshare.search.Search']}"
-        data-sly-set.pagePredicate="${modelCache['com.adobe.aem.commons.assetshare.components.predicates.PagePredicate']}"></sly>
+        data-sly-set.pagePredicate="${modelCache['com.adobe.aem.commons.assetshare.components.predicates.PagePredicate']}"
+        data-sly-set.discoveryAction="${currentPage.path @ selectors = 'discovery', extension = 'json'}"></sly>
 
 <form   role="search"
         class="ui form"
         id="${pagePredicate.formId}"
         action="${currentPage.path @ extension = 'html'}"
         data-asset-share-action="${currentPage.path @ selectors = 'results', extension = 'html'}"
+        data-asset-share-discovery-contract="1"
+        data-asset-share-discovery-enabled="${discovery.enabled ? 'true' : 'false'}"
+        data-asset-share-discovery-action="${discovery.enabled ? discoveryAction : ''}"
         data-asset-share-id="form">
-    <div data-asset-share-id="discovery-allowed-path-roots" hidden>
-        <span data-sly-repeat.path="${pagePredicate.paths}"
-              data-asset-share-discovery-allowed-path-root="${path}"></span>
-    </div>
-
-    <!--/* Populated only when this search was resolved by DiscoverySearchProviderImpl. Carries the
-          discovery agent's raw (v2) response so search.js can, in this same round trip, sync the
-          search rail's control selections and query summary without a second network call. */-->
-    <div data-sly-test="${search.results.additionalData['discoveryAgentResponse']}"
-         data-asset-share-id="discovery-agent-response"
-         data-asset-share-discovery-agent-response="${search.results.additionalData['discoveryAgentResponse']}"
-         hidden></div>
     <div class="ui one column grid">
         <div class="column" data-asset-share-id="layout-container">
             <!--/* Include this resource w/ default selectors to get the proper initial view */-->

@@ -14,7 +14,7 @@ var assert = require("assert"),
     path = require("path"),
     discoveryControls = require(path.resolve(
         __dirname,
-        "../../main/content/jcr_root/apps/asset-share-commons/clientlibs/clientlib-site/js/search/discovery-controls.js"
+        "helpers/discovery-controls.js"
     )),
     endpoint = process.env.ASC_DISCOVERY_AGENT_URL,
     prompt = process.env.ASC_DISCOVERY_PROMPT ||
@@ -115,11 +115,11 @@ var context = {
                 title: "SORT BY",
                 kind: "choice",
                 cardinality: "one",
-                state: {values: ["@jcr:content/jcr:lastModified"]},
+                state: {values: ["sort-option-0"]},
                 options: [
-                    {value: "@jcr:content/jcr:lastModified", label: "Last Modified", disabled: false},
-                    {value: "jcr:content/metadata/dam:size", label: "Size", disabled: false},
-                    {value: "jcr:content/metadata/tiff:ImageWidth", label: "Width", disabled: false}
+                    {value: "sort-option-0", label: "Last Modified", disabled: false},
+                    {value: "sort-option-1", label: "Size", disabled: false},
+                    {value: "sort-option-2", label: "Width", disabled: false}
                 ]
             },
             {

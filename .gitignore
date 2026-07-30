@@ -30,6 +30,8 @@ content/src/main/content/jcr_root/etc/designs/.content.xml
 content/src/main/content/jcr_root/etc/clientlibs/.content.xml
 
 ui.tests/node_modules/
+ui.apps/node/
+ui.apps/node_modules/
 
 #VS Code
 .history

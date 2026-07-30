@@ -65,7 +65,7 @@ import java.util.stream.StreamSupport;
 import static org.osgi.framework.Constants.SERVICE_RANKING;
 
 @Component(
-        service = {SearchProvider.class, QuerySearchProviderImpl.class},
+        service = SearchProvider.class,
         property = {
                 SERVICE_RANKING + ":Integer=" + Integer.MIN_VALUE
         }
