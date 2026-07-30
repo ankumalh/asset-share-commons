@@ -367,8 +367,17 @@ Supported properties are:
 | `http.timeout` | Connect, pool, and response timeout in milliseconds | `30000` |
 | `max.response.bytes` | Maximum accepted response body | `1048576` |
 
-The generic `all-cloud` package does not configure an endpoint or environment-specific service
-user mapping. Discovery is opt-in. When the endpoint is absent:
+The `all-cloud` package configures the following discovery endpoint for both author and publish:
+
+```text
+https://aem-assets-adobe-aem-experience-advisory-agent-depl-d06424.stage.cloud.adobe.io/transform-query
+```
+
+The packaged configurations set `agent.endpoint` and explicitly leave `ims.provider.name`
+empty so the stage endpoint is called without the default `Asset Compute` provider. They do
+not ship an authorization header, request headers, or credentials. Customer environments can
+override the IMS provider and authentication properties with higher-priority run-mode
+configuration. If an environment removes or overrides the endpoint with an empty value:
 
 - the results form carries the current discovery contract marker but no resolver action;
 - the search bar does not advertise the `/discovery` command; and
@@ -380,12 +389,11 @@ Existing results-component overlays that predate the discovery action can derive
 compatibility path. An explicit `data-asset-share-discovery-enabled="false"` also disables the
 fallback in customer overlays.
 
-Configure an endpoint in the target environment, for example during development:
+Override the packaged endpoint in the target environment when a different deployment is required:
 
 ```json
 {
-  "agent.endpoint": "https://aem-assets-adobe-aem-experience-advisory-agent-depl-d06424.stage.cloud.adobe.io/transform-query",
-  "ims.provider.name": ""
+  "agent.endpoint": "https://customer-specific-agent.example.com/transform-query"
 }
 ```
 
