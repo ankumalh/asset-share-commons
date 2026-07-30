@@ -64,7 +64,8 @@ public class ExperienceFragmentDiscoveryModelRootProviderTest {
         final Page currentPage = context.resourceResolver()
                 .adaptTo(PageManager.class).getPage("/content/search");
 
-        final Collection<Resource> roots = provider.getModelRoots(context.request(), currentPage);
+        final Collection<Resource> roots = provider.getModelRoots(
+                context.request(), currentPage, fragmentComponent);
 
         assertEquals(1, roots.size());
         assertTrue(roots.iterator().next().getPath().endsWith("/master/jcr:content"));

@@ -282,7 +282,7 @@ AssetShare.Search.Form = function (ns) {
 
     function submitDiscoveryResolution(prompt, currentState, success) {
         var query = (currentState ? currentState + "&" : "") +
-            "prompt=" + encodeURIComponent(prompt);
+            "discovery.prompt=" + encodeURIComponent(prompt);
 
         if (!discoveryUrl) {
             return $.Deferred().reject().promise();

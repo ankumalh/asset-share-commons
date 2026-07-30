@@ -29,9 +29,11 @@ import org.osgi.framework.Constants;
 
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
@@ -39,10 +41,12 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
 import org.mockito.ArgumentCaptor;
@@ -163,8 +167,10 @@ public class DiscoveryResolverImplTest {
                         200, "application/json", agentJson.getBytes(StandardCharsets.UTF_8)));
 
         final Map<String, Object> requestParameters = new HashMap<>();
-        requestParameters.put("prompt", "find landscape JPEGs");
-        requestParameters.put("context", "browser-context-must-not-survive");
+        requestParameters.put("discovery.prompt", "find landscape JPEGs");
+        requestParameters.put("discovery.context", "browser-context-must-not-survive");
+        requestParameters.put("prompt", "customer-prompt");
+        requestParameters.put("context", "customer-context");
         requestParameters.put("4_group.propertyvalues.0_values", "image/png");
         requestParameters.put("layout", "card");
         requestParameters.put("p.limit", "24");
@@ -202,8 +208,10 @@ public class DiscoveryResolverImplTest {
         assertTrue(redirect.contains("p.offset=0"));
         assertTrue(redirect.contains("customer=one&customer=two"));
         assertFalse(redirect.contains("image%2Fpng"));
-        assertFalse(redirect.contains("prompt="));
-        assertFalse(redirect.contains("context="));
+        assertTrue(redirect.contains("prompt=customer-prompt"));
+        assertTrue(redirect.contains("context=customer-context"));
+        assertFalse(redirect.contains("discovery.prompt="));
+        assertFalse(redirect.contains("discovery.context="));
     }
 
     @Test
@@ -241,7 +249,7 @@ public class DiscoveryResolverImplTest {
         final Map<String, Object> requestParameters = new HashMap<>();
         requestParameters.put("ai-fulltext", "old semantic query");
         requestParameters.put("fulltext", "stale classic query");
-        requestParameters.put("prompt", "find semantic images");
+        requestParameters.put("discovery.prompt", "find semantic images");
         context.request().setParameterMap(requestParameters);
 
         final DiscoveryResolverImpl resolver = new DiscoveryResolverImpl();
@@ -259,7 +267,83 @@ public class DiscoveryResolverImplTest {
         assertTrue(agentContext.getValue().contains("\"controls\":[]"));
         assertTrue(resolution.getRedirectUrl().contains("ai-fulltext=semantic+landscape"));
         assertFalse(resolution.getRedirectUrl().contains("fulltext=stale"));
-        assertFalse(resolution.getRedirectUrl().contains("prompt="));
+        assertFalse(resolution.getRedirectUrl().contains("discovery.prompt="));
+    }
+
+    @Test
+    public void visitsExternalRootsAtTheRenderingComponentPosition() throws Exception {
+        context.create().page("/content/assets", "/apps/test/template",
+                "sling:resourceType", "test/page-root");
+        context.create().resource("/content/assets/jcr:content/before",
+                "sling:resourceType", "asset-share-commons/components/search/property");
+        context.create().resource("/content/assets/jcr:content/fragment",
+                "sling:resourceType", "test/reference");
+        context.create().resource("/content/assets/jcr:content/after",
+                "sling:resourceType", "asset-share-commons/components/search/property");
+        final Resource externalRoot = context.create().resource(
+                "/content/experience-fragments/site/rail/master/jcr:content",
+                "sling:resourceType", "test/fragment-root");
+        context.create().resource(externalRoot.getPath() + "/inside",
+                "sling:resourceType", "asset-share-commons/components/search/property");
+        context.currentResource("/content/assets");
+
+        final List<String> adaptationOrder = new ArrayList<>();
+        final ModelFactory modelFactory = mock(ModelFactory.class);
+        doAnswer(invocation -> {
+            final Resource resource = invocation.getArgument(1);
+            final Class<?> modelClass = invocation.getArgument(2);
+            if (modelClass == PropertyPredicate.class) {
+                adaptationOrder.add(resource.getName());
+                return mock(PropertyPredicate.class);
+            }
+            return null;
+        }).when(modelFactory).getModelFromWrappedRequest(
+                eq(context.request()), any(Resource.class), any(Class.class));
+
+        final DiscoveryAgentClient agent = mock(DiscoveryAgentClient.class);
+        when(agent.isConfigured()).thenReturn(true);
+        when(agent.call(eq("find assets"), any(String.class))).thenReturn(
+                new DiscoveryAgentResponse(
+                        200,
+                        "application/json",
+                        ("{\"version\":2,\"query\":{\"fulltext\":null,\"path\":null},"
+                                + "\"controlUpdates\":[]}").getBytes(StandardCharsets.UTF_8)));
+
+        final DiscoveryResolverImpl resolver = new DiscoveryResolverImpl();
+        setField(resolver, "modelFactory", modelFactory);
+        setField(resolver, "discoveryAgentClient", agent);
+        resolver.bindDiscoveryModelRootProvider((request, page, renderedComponent) ->
+                renderedComponent.getPath().endsWith("/fragment")
+                        ? Collections.singletonList(externalRoot)
+                        : Collections.emptyList());
+
+        resolver.resolve(context.request(), "find assets");
+
+        assertEquals(Arrays.asList("before", "inside", "after"), adaptationOrder);
+    }
+
+    @Test
+    public void rejectsPagesWithoutAscSearchModelsBeforeCallingAgent() throws Exception {
+        context.create().page("/content/plain", "/apps/test/template",
+                "sling:resourceType", "test/page-root");
+        context.create().resource("/content/plain/jcr:content/text",
+                "sling:resourceType", "test/text");
+        context.currentResource("/content/plain");
+
+        final DiscoveryAgentClient agent = mock(DiscoveryAgentClient.class);
+        when(agent.isConfigured()).thenReturn(true);
+        final DiscoveryResolverImpl resolver = new DiscoveryResolverImpl();
+        setField(resolver, "modelFactory", mock(ModelFactory.class));
+        setField(resolver, "discoveryAgentClient", agent);
+
+        try {
+            resolver.resolve(context.request(), "find assets");
+            fail("Expected a non-search page to be rejected");
+        } catch (DiscoveryResolutionException e) {
+            assertEquals(404, e.getStatus());
+            assertEquals("not_search_page", e.getCode());
+        }
+        verify(agent, never()).call(any(String.class), any(String.class));
     }
 
     @Test

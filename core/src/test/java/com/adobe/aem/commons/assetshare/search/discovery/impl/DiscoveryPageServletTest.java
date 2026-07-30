@@ -44,7 +44,7 @@ public class DiscoveryPageServletTest {
     @Test
     public void returnsCanonicalRedirect() throws Exception {
         context.request().setParameterMap(Collections.<String, Object>singletonMap(
-                "prompt", "find JPEGs"));
+                "discovery.prompt", "find JPEGs"));
         when(resolver.resolve(context.request(), "find JPEGs")).thenReturn(
                 new DiscoveryResolution("/content/assets.html?format=image%2Fjpeg&p.offset=0"));
 
@@ -63,6 +63,9 @@ public class DiscoveryPageServletTest {
 
     @Test
     public void rejectsMissingPromptWithoutCallingResolver() throws Exception {
+        context.request().setParameterMap(Collections.<String, Object>singletonMap(
+                "prompt", "customer-owned-value"));
+
         servlet.doPost(context.request(), context.response());
 
         assertEquals(400, context.response().getStatus());
@@ -75,7 +78,7 @@ public class DiscoveryPageServletTest {
     @Test
     public void rejectsOversizedPrompt() throws Exception {
         context.request().setParameterMap(Collections.<String, Object>singletonMap(
-                "prompt", String.join("", Collections.nCopies(2001, "x"))));
+                "discovery.prompt", String.join("", Collections.nCopies(2001, "x"))));
 
         servlet.doPost(context.request(), context.response());
 
@@ -85,7 +88,7 @@ public class DiscoveryPageServletTest {
     @Test
     public void rejectsOversizedSearchStateBeforeCallingTheAgent() throws Exception {
         final Map<String, Object> parameters = new HashMap<>();
-        parameters.put("prompt", "find JPEGs");
+        parameters.put("discovery.prompt", "find JPEGs");
         parameters.put("customer", String.join("", Collections.nCopies(4097, "x")));
         context.request().setParameterMap(parameters);
 
@@ -101,7 +104,7 @@ public class DiscoveryPageServletTest {
     @Test
     public void returnsStableResolverError() throws Exception {
         context.request().setParameterMap(Collections.<String, Object>singletonMap(
-                "prompt", "find JPEGs"));
+                "discovery.prompt", "find JPEGs"));
         when(resolver.resolve(context.request(), "find JPEGs")).thenThrow(
                 new DiscoveryResolutionException(
                         502, "invalid_agent_response", "Agent response was invalid."));
@@ -119,7 +122,7 @@ public class DiscoveryPageServletTest {
     @Test
     public void returnsStableUnexpectedError() throws Exception {
         context.request().setParameterMap(Collections.<String, Object>singletonMap(
-                "prompt", "find JPEGs"));
+                "discovery.prompt", "find JPEGs"));
         when(resolver.resolve(context.request(), "find JPEGs")).thenThrow(
                 new IllegalStateException("unexpected"));
 

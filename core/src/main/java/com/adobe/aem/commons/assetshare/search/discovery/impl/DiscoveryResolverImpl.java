@@ -24,7 +24,6 @@ import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryControlAdapter
 import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryControlOption;
 import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryModelRootProvider;
 import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryParameterUpdate;
-import com.adobe.aem.commons.assetshare.util.ComponentModelVisitor;
 import com.day.cq.wcm.api.Page;
 import com.day.cq.wcm.api.PageManager;
 import com.google.gson.Gson;
@@ -56,8 +55,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 @Component(service = DiscoveryResolver.class)
@@ -65,8 +66,8 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
     private static final Logger log = LoggerFactory.getLogger(DiscoveryResolverImpl.class);
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
 
-    private static final String PARAM_PROMPT = "prompt";
-    private static final String PARAM_CONTEXT = "context";
+    private static final String PARAM_PROMPT = "discovery.prompt";
+    private static final String PARAM_CONTEXT = "discovery.context";
     private static final String PARAM_OFFSET = "p.offset";
     private static final String PARAM_FULLTEXT = "fulltext";
     private static final String PARAM_AI_FULLTEXT = "ai-fulltext";
@@ -115,6 +116,13 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
             this.predicate = predicate;
             this.adapter = adapter;
         }
+    }
+
+    private static final class DiscoveredModels {
+        private final List<Predicate> predicates = new ArrayList<>();
+        private final List<FulltextPredicate> fulltextPredicates = new ArrayList<>();
+        private final List<Resource> roots = new ArrayList<>();
+        private final Set<String> rootPaths = new LinkedHashSet<>();
     }
 
     @Reference
@@ -174,34 +182,13 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
             throw failure(400, "invalid_page", "The discovery request is not associated with a page.");
         }
 
-        final List<Resource> modelRoots = modelRoots(request, currentPage);
-        final List<Predicate> predicateModels = new ArrayList<>();
-        final List<FulltextPredicate> fulltextModels = new ArrayList<>();
-        for (int index = 0; index < modelRoots.size(); index++) {
-            final Resource modelRoot = modelRoots.get(index);
-            final ComponentModelVisitor<Predicate> visitor =
-                    new ComponentModelVisitor<>(
-                            request,
-                            modelFactory,
-                            Predicate.class,
-                            PREDICATE_MODEL_CLASSES);
-            visitor.accept(modelRoot);
-            for (final Predicate predicate : visitor.getModels()) {
-                if (index == 0
-                        || (!(predicate instanceof PagePredicate)
-                        && !(predicate instanceof HiddenPredicate))) {
-                    predicateModels.add(predicate);
-                }
-            }
-
-            final ComponentModelVisitor<FulltextPredicate> fulltextVisitor =
-                    new ComponentModelVisitor<>(
-                            request,
-                            modelFactory,
-                            FULLTEXT_RESOURCE_TYPES,
-                            FulltextPredicate.class);
-            fulltextVisitor.accept(modelRoot);
-            fulltextModels.addAll(fulltextVisitor.getModels());
+        final DiscoveredModels discoveredModels = discoverModels(request, currentPage);
+        final List<Predicate> predicateModels = discoveredModels.predicates;
+        final List<FulltextPredicate> fulltextModels = discoveredModels.fulltextPredicates;
+        if (fulltextModels.isEmpty()
+                && predicateModels.stream().allMatch(predicate -> predicate instanceof HiddenPredicate)) {
+            throw failure(404, "not_search_page",
+                    "The page does not contain an ASC search model.");
         }
         final String fulltextParameterName = fulltextParameterName(fulltextModels);
 
@@ -384,20 +371,51 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
         return null;
     }
 
-    private List<Resource> modelRoots(final SlingHttpServletRequest request,
-                                      final Page currentPage)
+    private DiscoveredModels discoverModels(final SlingHttpServletRequest request,
+                                            final Page currentPage)
             throws DiscoveryResolutionException {
-        final List<Resource> roots = new ArrayList<>();
         final Resource pageRoot = currentPage.getContentResource();
         if (pageRoot == null) {
             throw failure(400, "invalid_page", "The discovery page has no content resource.");
         }
-        roots.add(pageRoot);
+
+        final DiscoveredModels models = new DiscoveredModels();
+        models.roots.add(pageRoot);
+        models.rootPaths.add(pageRoot.getPath());
+        visitModelTree(request, currentPage, pageRoot, false, models);
+        return models;
+    }
+
+    private void visitModelTree(final SlingHttpServletRequest request,
+                                final Page currentPage,
+                                final Resource resource,
+                                final boolean external,
+                                final DiscoveredModels models)
+            throws DiscoveryResolutionException {
+        if (resource == null
+                || resource.getValueMap().get("sling:resourceType", String.class) == null) {
+            return;
+        }
+
+        final Predicate predicate = predicateModel(request, resource);
+        if (predicate != null
+                && (!external
+                || (!(predicate instanceof PagePredicate)
+                && !(predicate instanceof HiddenPredicate)))) {
+            models.predicates.add(predicate);
+        }
+        if (isFulltextResource(resource)) {
+            final FulltextPredicate fulltext = modelFactory.getModelFromWrappedRequest(
+                    request, resource, FulltextPredicate.class);
+            if (fulltext != null) {
+                models.fulltextPredicates.add(fulltext);
+            }
+        }
 
         for (final DiscoveryModelRootProvider provider : modelRootProviders) {
             final Collection<Resource> providedRoots;
             try {
-                providedRoots = provider.getModelRoots(request, currentPage);
+                providedRoots = provider.getModelRoots(request, currentPage, resource);
             } catch (RuntimeException e) {
                 throw failure(500, "model_root_provider_failed",
                         "A discovery model-root provider failed.", e);
@@ -407,17 +425,48 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
                         "A discovery model-root provider returned no collection.");
             }
             for (final Resource root : providedRoots) {
-                if (root == null || isCoveredByExistingRoot(roots, root)) {
+                if (root == null || isCoveredByExistingRoot(models.roots, root)) {
                     continue;
                 }
-                if (roots.size() >= MAX_MODEL_ROOTS) {
+                if (models.roots.size() >= MAX_MODEL_ROOTS) {
                     throw failure(413, "context_too_large",
                             "The rendered page contains too many external model roots.");
                 }
-                roots.add(root);
+                if (!models.rootPaths.add(root.getPath())) {
+                    continue;
+                }
+                models.roots.add(root);
+                visitModelTree(request, currentPage, root, true, models);
             }
         }
-        return roots;
+
+        for (final Resource child : resource.getChildren()) {
+            visitModelTree(request, currentPage, child, external, models);
+        }
+    }
+
+    private Predicate predicateModel(final SlingHttpServletRequest request,
+                                     final Resource resource) {
+        for (final Map.Entry<String, Class<? extends Predicate>> entry
+                : PREDICATE_MODEL_CLASSES.entrySet()) {
+            if (resource.getResourceResolver().isResourceType(resource, entry.getKey())) {
+                final Predicate predicate = modelFactory.getModelFromWrappedRequest(
+                        request, resource, entry.getValue());
+                if (predicate != null) {
+                    return predicate;
+                }
+            }
+        }
+        return modelFactory.getModelFromWrappedRequest(request, resource, Predicate.class);
+    }
+
+    private boolean isFulltextResource(final Resource resource) {
+        for (final String resourceType : FULLTEXT_RESOURCE_TYPES) {
+            if (resource.getResourceResolver().isResourceType(resource, resourceType)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isCoveredByExistingRoot(final List<Resource> roots, final Resource candidate) {

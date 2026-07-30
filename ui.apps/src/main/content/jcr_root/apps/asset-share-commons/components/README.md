@@ -51,9 +51,12 @@ Hidden and page predicates remain server-only. They are merged by the normal can
 after discovery resolution and are never agent-writable.
 
 ASC visits the current page component tree and automatically follows rendered Core Component
-Experience Fragment variations. A customer reference/include component that renders filters from
-another external resource tree can register a `DiscoveryModelRootProvider`; the returned roots are
-used only for server-side Sling Model adaptation and are never sent to the agent.
+Experience Fragment variations at each reference component's render-order position. This preserves
+the request-scoped predicate group IDs used by the normal server-rendered GET. A customer
+reference/include component that renders filters from another external resource tree can implement
+the `@ConsumerType` `DiscoveryModelRootProvider`; ASC invokes it with each rendered component, and
+visits returned roots immediately at that position. The roots are used only for server-side Sling
+Model adaptation and are never sent to the agent.
 
 See
 [`docs/discovery-agent-integration.md`](../../../../../../../../docs/discovery-agent-integration.md)

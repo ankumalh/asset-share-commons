@@ -60,6 +60,7 @@ import java.util.Map;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 
 import static org.osgi.framework.Constants.SERVICE_RANKING;
@@ -72,6 +73,10 @@ import static org.osgi.framework.Constants.SERVICE_RANKING;
 )
 public class QuerySearchProviderImpl implements SearchProvider {
     private static final Logger log = LoggerFactory.getLogger(QuerySearchProviderImpl.class);
+    private static final Pattern REPEATED_PROPERTY_VALUES_PARAMETER = Pattern.compile(
+            "^(?:-?\\d+_group\\.)?propertyvalues\\.values$");
+    private static final Pattern REPEATED_PATH_PARAMETER = Pattern.compile(
+            "^(?:-?\\d+_group\\.)?path$");
 
     @Reference
     private transient SearchSafety searchSafety;
@@ -167,14 +172,13 @@ public class QuerySearchProviderImpl implements SearchProvider {
         // Copy over query params
 
         for (final Map.Entry<String, RequestParameter[]> entry : request.getRequestParameterMap().entrySet()) {
-            params.put(entry.getKey(), entry.getValue()[0].getString().trim());
+            copyRequestParameter(params, entry.getKey(), entry.getValue());
         }
 
         // Remove common junk params
         cleanParams(params);
 
         final PagePredicate pagePredicate = request.adaptTo(PagePredicate.class);
-        final PredicateGroup paramsPredicateGroup = PredicateConverter.createPredicates(params);
 
         PagePredicate.ParamTypes[] excludeParamTypes = new PagePredicate.ParamTypes[]{};
 
@@ -196,6 +200,8 @@ public class QuerySearchProviderImpl implements SearchProvider {
             excludeParamTypes = new PagePredicate.ParamTypes[]{PagePredicate.ParamTypes.PATH};
         }
 
+        final PredicateGroup paramsPredicateGroup = PredicateConverter.createPredicates(params);
+
         // Combine the use-provided (HTTP Params) and the server-side params in a manner that will not accidentally replace/merge predicates that collide with Group Ids.
         final PredicateGroup combinedPredicateGroup = safeMerge(paramsPredicateGroup,
                 pagePredicate.getPredicateGroup(excludeParamTypes));
@@ -203,6 +209,35 @@ public class QuerySearchProviderImpl implements SearchProvider {
         params = PredicateConverter.createMap(combinedPredicateGroup);
 
         return params;
+    }
+
+    /**
+     * QueryBuilder accepts a single value per map key, while HTML multi-select
+     * controls submit repeated values under one name. Expand the two ASC
+     * predicate shapes that intentionally use repeated form names into their
+     * equivalent indexed QueryBuilder parameters.
+     */
+    private void copyRequestParameter(final Map<String, String> params,
+                                      final String name,
+                                      final RequestParameter[] values) {
+        if (values == null || values.length == 0) {
+            return;
+        }
+        if (values.length > 1 && REPEATED_PROPERTY_VALUES_PARAMETER.matcher(name).matches()) {
+            final String prefix = StringUtils.removeEnd(name, ".values");
+            for (int index = 0; index < values.length; index++) {
+                params.put(prefix + "." + index + "_values", values[index].getString().trim());
+            }
+            return;
+        }
+        if (values.length > 1 && REPEATED_PATH_PARAMETER.matcher(name).matches()) {
+            final String prefix = StringUtils.removeEnd(name, "path");
+            for (int index = 0; index < values.length; index++) {
+                params.put(prefix + index + "_path", values[index].getString().trim());
+            }
+            return;
+        }
+        params.put(name, values[0].getString().trim());
     }
 
     /**

@@ -69,6 +69,8 @@ Collection.prototype.serializeArray = function() {
             },
             {attributes: {name: "customer", form: formId}, value: "one"},
             {attributes: {name: "customer", form: formId}, value: "two"},
+            {attributes: {name: "prompt", form: formId}, value: "customer-prompt"},
+            {attributes: {name: "context", form: formId}, value: "customer-context"},
             {attributes: {name: "p.offset", form: formId}, value: "24"}
         ],
         posts = [],
@@ -175,12 +177,16 @@ Collection.prototype.serializeArray = function() {
     assert.strictEqual(currentState.indexOf("fulltext"), -1);
     assert.ok(currentState.indexOf("4_group.propertyvalues.0_values=image%2Fpng") > -1);
     assert.ok(currentState.indexOf("customer=one&customer=two") > -1);
+    assert.ok(currentState.indexOf("prompt=customer-prompt") > -1);
+    assert.ok(currentState.indexOf("context=customer-context") > -1);
     assert.ok(currentState.indexOf("p.offset=24") > -1);
 
     form.submitDiscoveryResolution("find landscape JPEGs", currentState, function() {});
     assert.strictEqual(posts[0].url, "/content/search.discovery.json");
-    assert.ok(posts[0].body.indexOf("prompt=find%20landscape%20JPEGs") > -1);
-    assert.strictEqual(posts[0].body.indexOf("context="), -1,
+    assert.ok(posts[0].body.indexOf("discovery.prompt=find%20landscape%20JPEGs") > -1);
+    assert.ok(posts[0].body.indexOf("prompt=customer-prompt") > -1);
+    assert.ok(posts[0].body.indexOf("context=customer-context") > -1);
+    assert.strictEqual(posts[0].body.indexOf("discovery.context="), -1,
         "semantic control context is built by AEM, not submitted by the browser");
 
     formElement.attributes["data-asset-share-discovery-enabled"] = "false";

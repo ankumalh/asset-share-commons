@@ -62,10 +62,10 @@ public class DiscoveryPageServlet extends SlingAllMethodsServlet {
             return;
         }
 
-        final String prompt = StringUtils.trimToNull(request.getParameter("prompt"));
+        final String prompt = StringUtils.trimToNull(request.getParameter("discovery.prompt"));
         if (prompt == null || prompt.length() > MAX_PROMPT_LENGTH) {
             writeError(response, 400, "invalid_request",
-                    "The prompt parameter is required and must not exceed 2000 characters.");
+                    "The discovery.prompt parameter is required and must not exceed 2000 characters.");
             return;
         }
 

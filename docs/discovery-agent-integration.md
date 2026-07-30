@@ -59,18 +59,20 @@ The POST target is rendered on the results form as
 `POST /content/*.discovery.json`; `POST *.results.html` is not exposed.
 
 The browser submits the current serialized filter, sort, layout, pagination, and customer
-parameters. It removes the input containing the `/discovery` command and adds `prompt`. AEM builds
-the v2 semantic context from the page's Sling Models by walking `Predicate` components with
-`ComponentModelVisitor`. Command recognition is scoped to the marked discovery search-bar input;
-another freeform or customer field whose legitimate value begins with `/discovery` remains an
-ordinary search value.
+parameters. It removes the input containing the `/discovery` command and adds the reserved
+`discovery.prompt` transport parameter. AEM builds the v2 semantic context from the page's Sling
+Models in component render order. Command recognition is scoped to the marked discovery search-bar
+input; another freeform or customer field whose legitimate value begins with `/discovery` remains
+an ordinary search value.
 
 The current page content resource is the primary model root. Core Component Experience Fragment
-variations rendered by the page are expanded automatically. A reference/include component with a
-different external composition mechanism can register a `DiscoveryModelRootProvider` that returns
-its additional rendered component roots. Those resource paths stay inside AEM; the resolver passes
-only the resulting semantic controls to the agent. Page and hidden predicates found in an external
-model root are never imported as policy—the canonical page continues to own those predicates.
+variations rendered by the page are expanded automatically at the reference component's exact
+render-order position. This is required because ASC predicate Sling Models allocate request-scoped
+QueryBuilder group IDs as they render. A reference/include component with a different external
+composition mechanism can register a `DiscoveryModelRootProvider` that returns the roots rendered
+by that component. Those resource paths stay inside AEM; the resolver passes only the resulting
+semantic controls to the agent. Page and hidden predicates found in an external model root are
+never imported as policy—the canonical page continues to own those predicates.
 
 Hidden predicates and `PagePredicate` are never writable controls. `PagePredicate` contributes
 only the configured roots needed to validate a residual semantic path. Hidden predicates and
@@ -88,12 +90,14 @@ The endpoint is page-scoped:
 POST /content/asset-share-commons/en/light.discovery.json
 Content-Type: application/x-www-form-urlencoded
 
-prompt=Find+landscape+JPEGs&<current serialized ASC parameters>
+discovery.prompt=Find+landscape+JPEGs&<current serialized ASC parameters>
 ```
 
 The form serializes the current filter, sort, layout, limit, pagination, residual fulltext/path,
 and customer parameters. It excludes the form field carrying the `/discovery` command so the
-command cannot leak into the canonical URL.
+command cannot leak into the canonical URL. Only the `discovery.*` namespace is reserved for this
+browser-to-AEM transport; customer fields literally named `prompt` or `context` remain ordinary
+search state and survive reconciliation.
 
 The endpoint is registered for `cq:Page`, the `discovery` selector, the `json` extension, and
 `POST`. It adds normal Sling bindings before adapting predicate models because several ASC Sling
@@ -200,7 +204,8 @@ The agent result refines the current search:
 - Layout, limit, unrelated manual filters, repeated customer parameters, and other customer state
   are preserved.
 - `p.offset` is reset to `0`.
-- Prompt, context, discovery transport fields, authoring fields, and agent diagnostics are removed.
+- Reserved `discovery.*` transport fields, authoring fields, and `agent.*` diagnostics are removed.
+  Unnamespaced customer parameters, including fields named `prompt` or `context`, are preserved.
 - Residual fulltext is length-validated.
 - Residual fulltext is written using the page's actual `FulltextPredicate` name, including
   `ai-fulltext` when AI Search is enabled.
@@ -221,6 +226,8 @@ The destination GET then enters the unchanged ASC path:
 1. Predicate Sling Models read the canonical query parameters and server-render the selected
    filter values.
 2. `QuerySearchProviderImpl` builds the QueryBuilder request.
+   Repeated dropdown/multiselect `propertyvalues.values` and `path` form values are expanded to
+   their indexed QueryBuilder equivalents so no selection is lost.
 3. Page paths and hidden predicates are merged.
 4. `SearchSafety`, search preprocessors, and postprocessors run normally.
 5. Results render through the normal ASC results component.
@@ -322,14 +329,19 @@ tree outside the current page content subtree:
 ```java
 Collection<Resource> getModelRoots(
     SlingHttpServletRequest request,
-    Page currentPage);
+    Page currentPage,
+    Resource renderedComponent);
 ```
 
-ASC always visits the current page first and de-duplicates nested or repeated roots. It supports at
-most 20 total roots. The built-in provider follows localized Core Component Experience Fragment
-variations, including nested variations, with cycle detection. Customer reference/include
-components can register a provider for their own composition mechanism; their standard predicate
-interfaces then use the same built-in control adapters.
+ASC invokes this customer-implemented (`@ConsumerType`) SPI for each component as it walks the
+current page in repository/render order. Returned roots are expanded immediately before the
+component's local children, so controls rendered before and after an include receive the same group
+IDs as the canonical GET. ASC de-duplicates nested or repeated roots, limits the traversal to 20
+total roots, and detects reference cycles. The built-in provider resolves localized Core Component
+Experience Fragment variations; nested fragments are followed by the resolver using the same
+ordered traversal. Customer reference/include components can register a provider for their own
+composition mechanism; their standard predicate interfaces then use the same built-in control
+adapters.
 
 ## Authentication and configuration
 
@@ -421,7 +433,8 @@ include invalid or oversized input or page state, missing configuration, adapter
 provider failure, unavailable or unsuccessful agent response, invalid agent response, mapping
 failure, and URL-encoding failure. Responses use `Cache-Control: no-store`. A search-only page with
 no adapter-backed rail controls remains valid: its v2 context has an empty `controls` array and the
-agent can still resolve residual fulltext/path.
+agent can still resolve residual fulltext/path. A `cq:Page` with no ASC predicate or search-bar
+model is rejected before any outbound agent call.
 
 Unexpected exceptions are returned as `internal_error`; agent response bodies, credentials, and
 semantic context are not returned to the browser.
@@ -429,8 +442,8 @@ semantic context are not returned to the browser.
 ## Implementation map
 
 - `DiscoveryPageServlet` owns the page-scoped HTTP contract and stable error envelope.
-- `DiscoveryResolverImpl` visits page models, selects adapters, calls the agent, validates the
-  patch, reconciles parameters, and constructs the same-page URL.
+- `DiscoveryResolverImpl` visits page and included models in render order, selects adapters, calls
+  the agent, validates the patch, reconciles parameters, and constructs the same-page URL.
 - `DiscoveryResponseValidator` strictly validates the v2 response before mapping.
 - `DefaultDiscoveryControlAdapter` supports the standard ASC predicate interfaces.
 - `DiscoveryControlAdapter` is the public customer extension SPI.
@@ -439,8 +452,6 @@ semantic context are not returned to the browser.
 - `DiscoveryAgentClientImpl` owns authentication, HTTP limits, and the v2 agent call.
 - `DiscoveryConfigurationImpl` exposes the opt-in configured state to HTL without exposing the
   endpoint or credentials.
-- `ComponentModelVisitor` resolves standard component resource types to their specific predicate
-  interfaces and follows resource supertypes for customer overlays.
 - `search-form.js` serializes current state and posts it to the resolver.
 - `search.js` maintains loading/error behavior and performs same-origin navigation.
 - `results.html` renders the page-specific `.discovery.json` action.
@@ -452,8 +463,9 @@ Deterministic tests cover built-in adapters, service ranking, patch behavior, re
 POST parameter detection, servlet errors, canonical URL generation, repeated customer parameters,
 exact checkbox/radio/dropdown/multiselect parameter shapes, raw freeform semantics, incomplete date
 models, toggle/slider cardinality, opaque sort mapping, AI Search, search-only pages, Experience
-Fragment roots, duplicate sort renderings, hidden predicates with custom query processors, opt-in
-rendering, overlay fallback, command-input scoping, and browser navigation/error behavior. The
+Fragment render order, repeated QueryBuilder multiselect values, duplicate sort renderings, hidden
+predicates with custom query processors, non-search-page rejection, opt-in rendering, overlay
+fallback, command-input scoping, and browser navigation/error behavior. The
 deterministic browser scripts run automatically from the `ui.apps` Maven `test` phase through
 `npm test`.
 

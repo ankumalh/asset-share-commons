@@ -45,7 +45,13 @@ public class QuerySearchProviderImplTest {
         final Map<String, Object> requestParameters = new HashMap<>();
         requestParameters.put("4_group.propertyvalues.property",
                 "jcr:content/metadata/dc:format");
-        requestParameters.put("4_group.propertyvalues.0_values", "image/jpeg");
+        requestParameters.put("4_group.propertyvalues.values",
+                new String[] {"image/jpeg", "image/png"});
+        requestParameters.put("5_group.path",
+                new String[] {
+                        "/content/dam/allowed/first",
+                        "/content/dam/allowed/second"
+                });
         requestParameters.put("p.offset", "0");
         requestParameters.put("p.limit", "24");
         requestParameters.put("layout", "card");
@@ -98,7 +104,9 @@ public class QuerySearchProviderImplTest {
 
         final Map<String, String> canonicalParameters = parameters.getValue();
         assertTrue(canonicalParameters.containsValue("image/jpeg"));
-        assertTrue(canonicalParameters.containsValue("/content/dam/allowed"));
+        assertTrue(canonicalParameters.containsValue("image/png"));
+        assertTrue(canonicalParameters.containsValue("/content/dam/allowed/first"));
+        assertTrue(canonicalParameters.containsValue("/content/dam/allowed/second"));
         assertTrue(canonicalParameters.containsValue(
                 "jcr:content/metadata/customer/securityClassification"));
         assertTrue(canonicalParameters.containsValue("public"));
