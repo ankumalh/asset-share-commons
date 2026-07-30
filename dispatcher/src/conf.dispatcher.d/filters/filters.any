@@ -30,5 +30,18 @@ $include "./default_filters.any"
 # Asset Rendition downloads
 /0401 { /type "allow" /method "POST" /path "/content/*" /selectors "download-asset-renditions" /extension "zip" }
 
-# Discovery agent proxy
-/0500 { /type "allow" /method "POST" /url "/bin/asset-share-commons/discovery" }
+# Discovery agent search (single round-trip: DiscoverySearchProviderImpl resolves the agent call,
+# predicate translation and the asset search server-side for this same request).
+#
+# This rule is intentionally narrow (method + selector + extension) rather than relying on the
+# broad /0010 catch-all -- if an environment tightens /0010 (its own comment invites this in
+# hardened configs), discovery search must keep working without a silent 404 at the dispatcher.
+#
+# Side effect: dispatcher can't inspect the POST body, so this can't be scoped further to
+# "only requests carrying prompt/context". It allows POST to any *.results.html, not just pages
+# using discovery -- SearchImpl's provider loop doesn't gate by HTTP method, so classic
+# (non-discovery) search becomes reachable via POST wherever it was previously GET-only. Not a
+# security issue (search is read-only), but a WAF/rate-limit rule that treats "POST to
+# /content/*" as inherently suspicious (a common anti-form-spam heuristic) will now also see
+# ordinary search traffic here.
+/0500 { /type "allow" /method "POST" /path "/content/*" /selectors "results" /extension "html" }

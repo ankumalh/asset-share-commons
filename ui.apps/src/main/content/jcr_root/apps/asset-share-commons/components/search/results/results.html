@@ -31,6 +31,14 @@
         <span data-sly-repeat.path="${pagePredicate.paths}"
               data-asset-share-discovery-allowed-path-root="${path}"></span>
     </div>
+
+    <!--/* Populated only when this search was resolved by DiscoverySearchProviderImpl. Carries the
+          discovery agent's raw (v2) response so search.js can, in this same round trip, sync the
+          search rail's control selections and query summary without a second network call. */-->
+    <div data-sly-test="${search.results.additionalData['discoveryAgentResponse']}"
+         data-asset-share-id="discovery-agent-response"
+         data-asset-share-discovery-agent-response="${search.results.additionalData['discoveryAgentResponse']}"
+         hidden></div>
     <div class="ui one column grid">
         <div class="column" data-asset-share-id="layout-container">
             <!--/* Include this resource w/ default selectors to get the proper initial view */-->

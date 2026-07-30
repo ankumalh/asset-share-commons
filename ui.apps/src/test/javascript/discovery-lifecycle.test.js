@@ -57,6 +57,17 @@ Collection.prototype.first = function() {
 Collection.prototype.get = function() {
     return this.elements;
 };
+Collection.prototype.html = function(value) {
+    if (typeof value === "undefined") {
+        return this.length ? (this.elements[0].html || "") : "";
+    }
+    this.elements.forEach(function(element) {
+        var match = /data-asset-share-discovery-agent-response="([^"]*)"/.exec(value);
+        element.html = value;
+        element.discoveryAgentResponseRaw = match ? match[1].replace(/&quot;/g, "\"") : null;
+    });
+    return this;
+};
 Collection.prototype.keypress = function() { return this; };
 Collection.prototype.map = function(callback) {
     return new Collection(this.elements.map(function(element, index) {
@@ -102,12 +113,38 @@ var eventHandlers = [],
     },
     discoveryOutput = {attributes: {}, children: []},
     discoveryTitle = {attributes: {}, text: ""},
-    posts = [],
+    discoveryQueries = [],
     submittedQueries = [],
+    addressBars = [],
     appliedUpdates = [],
     clearedControls = 0,
     currentAction = null,
     currentResidual = null;
+
+var AGENT_RESPONSE = {
+    version: 2,
+    query: {fulltext: "jpeg", path: "/content/dam/legal"},
+    controlUpdates: [
+        {id: "format", kind: "choice", state: {values: ["image/jpeg"]}},
+        {
+            id: "__asset_share_discovery_sort_orderby",
+            kind: "choice",
+            state: {values: ["jcr:content/metadata/dam:size"]}
+        }
+    ]
+};
+
+function discoveryResultsFragment() {
+    var escaped = JSON.stringify(AGENT_RESPONSE).replace(/"/g, "&quot;");
+
+    // Mirrors the real results.html markup: DiscoverySearchProviderImpl stashes the agent's raw
+    // response in Results#getAdditionalData(), and the HTL embeds it as a hidden data attribute in
+    // the results fragment for search.js to extract in this same round trip.
+    return "<section>results" +
+        "<div data-asset-share-id=\"discovery-agent-response\" " +
+        "data-asset-share-discovery-agent-response=\"" + escaped + "\"></div>" +
+        "</section>";
+}
 
 function promise(value) {
     return {
@@ -147,21 +184,6 @@ function jquery(value) {
 jquery.trim = function(value) {
     return (value || "").trim();
 };
-jquery.post = function(url, data) {
-    posts.push({url: url, data: data});
-    return promise({
-        version: 2,
-        query: {fulltext: "jpeg", path: "/content/dam/legal"},
-        controlUpdates: [
-            {id: "format", kind: "choice", state: {values: ["image/jpeg"]}},
-            {
-                id: "__asset_share_discovery_sort_orderby",
-                kind: "choice",
-                state: {values: ["jcr:content/metadata/dam:size"]}
-            }
-        ]
-    });
-};
 jquery.get = function(url, query) {
     submittedQueries.push({url: url, query: query});
     return promise("<section>results</section>");
@@ -183,9 +205,6 @@ jquery.when = function(result) {
             Ajax: {},
             Data: {
                 attr: function(element, name) {
-                    if (name === "discovery-agent-endpoint") {
-                        return "/bin/asset-share-commons/discovery";
-                    }
                     return element.attr("data-asset-share-" + name) || "";
                 },
                 val: function() {
@@ -193,12 +212,9 @@ jquery.when = function(result) {
                 }
             },
             Elements: {
-                element: function(name) {
+                element: function(name, context) {
                     if (name === "form") {
                         return new Collection([{attributes: {}}]);
-                    }
-                    if (name === "discovery-search") {
-                        return new Collection([{attributes: {"data-asset-share-discovery-agent-endpoint": "/discovery-agent"}}]);
                     }
                     if (name === "discovery-query") {
                         return new Collection([discoveryMessage]);
@@ -208,6 +224,16 @@ jquery.when = function(result) {
                     }
                     if (name === "discovery-query-title") {
                         return new Collection([discoveryTitle]);
+                    }
+                    if (name === "discovery-agent-response") {
+                        var element = context && context.elements && context.elements[0];
+                        return element && element.discoveryAgentResponseRaw ?
+                            new Collection([{
+                                attributes: {
+                                    "data-asset-share-discovery-agent-response": element.discoveryAgentResponseRaw
+                                }
+                            }]) :
+                            new Collection([]);
                     }
                     return new Collection([]);
                 },
@@ -222,14 +248,16 @@ jquery.when = function(result) {
                 SEARCH_INVALID: "invalid"
             },
             Navigation: {
-                addressBar: function() {},
+                addressBar: function(url) {
+                    addressBars.push(url);
+                },
                 gotoTop: function() {},
                 returnUrl: function() {}
             },
             Search: {
                 DiscoveryControls: {
                     validateResponse: function(response) {
-                        return response;
+                        return typeof response === "string" ? JSON.parse(response) : response;
                     }
                 },
                 Form: function() {
@@ -280,6 +308,15 @@ jquery.when = function(result) {
                             submittedQueries.push({query: query});
                             success("<section>results</section>");
                             return promise();
+                        },
+                        submitDiscoveryQuery: function(prompt, contextJson, baselineQuery, success) {
+                            discoveryQueries.push({
+                                prompt: prompt,
+                                context: contextJson,
+                                baselineQuery: baselineQuery
+                            });
+                            success(discoveryResultsFragment());
+                            return promise();
                         }
                     };
                 }
@@ -300,20 +337,22 @@ jquery.when = function(result) {
     ), "utf8"), context);
     context.AssetShare.Search.DiscoveryControls = {
         validateResponse: function(response) {
-            return response;
+            return typeof response === "string" ? JSON.parse(response) : response;
         }
     };
 
     context.AssetShare.Search.search({preventDefault: function() {}});
 
-    assert.strictEqual(posts.length, 1, "initial discovery calls the agent");
+    assert.strictEqual(discoveryQueries.length, 1, "initial discovery calls the agent in a single round trip");
     assert.strictEqual(clearedControls, 1, "discovery clears writable controls before snapshot");
     assert.deepStrictEqual(appliedUpdates[0][0].state.values, ["image/jpeg"]);
     assert.deepStrictEqual(appliedUpdates[0][1].state.values, ["jcr:content/metadata/dam:size"]);
-    assert.ok(submittedQueries[0].query.indexOf("path=%2Fcontent%2Fdam%2Flegal") > -1);
+    assert.ok(discoveryQueries[0].prompt, "the agent request carries the parsed /discovery prompt");
+    assert.ok(addressBars[addressBars.length - 1].indexOf("path=%2Fcontent%2Fdam%2Flegal") > -1,
+        "the deep-link address bar reflects the agent-resolved residual path, synced after control apply");
 
     context.AssetShare.Search.search({preventDefault: function() {}});
-    assert.strictEqual(posts.length, 2, "discovery submit asks the agent for fresh control state");
+    assert.strictEqual(discoveryQueries.length, 2, "discovery submit asks the agent for fresh control state");
     assert.strictEqual(clearedControls, 2);
 
     eventHandlers.filter(function(handler) {

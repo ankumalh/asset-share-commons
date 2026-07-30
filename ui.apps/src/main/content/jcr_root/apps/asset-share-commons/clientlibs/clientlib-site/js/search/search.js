@@ -69,13 +69,6 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         return ns.Elements.element("discovery-query-title");
     }
 
-    function getDiscoveryEndpoint() {
-        return ns.Data.attr(
-            ns.Elements.element("discovery-search"),
-            "discovery-agent-endpoint"
-        ) || "/bin/asset-share-commons/discovery";
-    }
-
     function getDiscoveryCommandInput() {
         return ns.Elements.element("discovery-search").find(":input").filter(function() {
             return $(this).is("input,textarea");
@@ -267,10 +260,25 @@ AssetShare.Search = (function (window, $, ns, ajax) {
         });
     }
 
+    function extractDiscoveryAgentResponse(fragmentHtml) {
+        var parsed = $("<div></div>").html(fragmentHtml),
+            responseElement = ns.Elements.element("discovery-agent-response", parsed),
+            raw;
+
+        if (!responseElement.length) {
+            return null;
+        }
+
+        raw = ns.Data.attr(responseElement, "discovery-agent-response");
+
+        return raw || null;
+    }
+
     function discoverySearch() {
         var prompt = getSearchPrompt(),
             contextJson,
-            context;
+            context,
+            baselineQuery;
 
         clearDiscoveryState();
         form.clearDiscoveryControls();
@@ -284,14 +292,29 @@ AssetShare.Search = (function (window, $, ns, ajax) {
 
         hideDiscoveryQuery();
 
-        $.when($.post(getDiscoveryEndpoint(), {
-            prompt: prompt,
-            context: contextJson
-        })).then(function(response) {
-            var validated;
+        baselineQuery = form.serializeDiscoveryStateFor(
+            getResidualQuery(),
+            ACTION_SEARCH,
+            getDiscoverySearchFieldNames()
+        );
+
+        if (!form.isValid()) {
+            searchFailed(EVENT_SEARCH_TYPE_FULL, false);
+            return;
+        }
+
+        form.submitDiscoveryQuery(prompt, contextJson, baselineQuery, function(fragmentHtml) {
+            var agentResponse = extractDiscoveryAgentResponse(fragmentHtml),
+                validated;
+
+            if (!agentResponse) {
+                clearDiscoveryState();
+                searchFailed(EVENT_SEARCH_TYPE_FULL, true);
+                return;
+            }
 
             try {
-                validated = ns.Search.DiscoveryControls.validateResponse(response, context);
+                validated = ns.Search.DiscoveryControls.validateResponse(agentResponse, context);
             } catch (e) {
                 clearDiscoveryState();
                 searchFailed(EVENT_SEARCH_TYPE_FULL, true);
@@ -304,7 +327,17 @@ AssetShare.Search = (function (window, $, ns, ajax) {
                 residual: validated.query
             };
             showDiscoveryState(validated.query);
-            submitDiscoveryState(ACTION_SEARCH, processSearch, EVENT_SEARCH_TYPE_FULL);
+
+            // The actual asset search already ran server-side (DiscoverySearchProviderImpl), so
+            // fragmentHtml already reflects the agent-resolved query -- no second request is made.
+            // Only the address-bar deep-link query is recomputed here, from the now rail-synced DOM.
+            activeRequestQuery = form.serializeDiscoveryStateFor(
+                getResidualQuery(),
+                ACTION_SEARCH,
+                getDiscoverySearchFieldNames()
+            );
+
+            processSearch(fragmentHtml);
         }).fail(function() {
             clearDiscoveryState();
             searchFailed(EVENT_SEARCH_TYPE_FULL, true);

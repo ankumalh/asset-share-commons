@@ -782,6 +782,21 @@ AssetShare.Search.Form = function (ns) {
         return $.when($.get(getUrl(), query)).then(success);
     }
 
+    function submitDiscoveryQuery(prompt, contextJson, residualQueryString, success) {
+        // residualQueryString is an already-serialized ("a=b&c=d") baseline query (mode, layout,
+        // sort, p.offset, any residual fulltext/path from a prior discovery turn, etc.), produced the
+        // same way a manually-driven rail search would be. prompt/context are appended so
+        // DiscoverySearchProviderImpl can resolve, translate and execute the real search server-side
+        // in this single request -- no second, separate call is made to fetch results.
+        var query = (residualQueryString ? residualQueryString + "&" : "") +
+            "prompt=" + encodeURIComponent(prompt) +
+            "&context=" + encodeURIComponent(contextJson);
+
+        // POST -- the serialized rail context can be arbitrarily large (every control's full option
+        // list), which would risk exceeding URL length limits on GET.
+        return $.when($.post(getUrl(), query)).then(success);
+    }
+
     function init() {
         url = ns.Data.attr(ns.Elements.element("form"), "action");
         mode = ns.Data.val("mode");
@@ -806,6 +821,7 @@ AssetShare.Search.Form = function (ns) {
         id: getId,
         submit: submit,
         submitQuery: submitQuery,
+        submitDiscoveryQuery: submitDiscoveryQuery,
         isValid: isValid
     };
 };

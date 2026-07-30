@@ -16,8 +16,10 @@
  * limitations under the License.
  */
 
-package com.adobe.aem.commons.assetshare.search.impl;
+package com.adobe.aem.commons.assetshare.search.discovery.impl;
 
+import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryAgentClient;
+import com.adobe.aem.commons.assetshare.search.discovery.DiscoveryAgentResponse;
 import com.adobe.granite.auth.oauth.AccessTokenProvider;
 import com.adobe.granite.crypto.CryptoException;
 import org.apache.commons.lang3.StringUtils;
@@ -30,12 +32,9 @@ import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.osgi.services.HttpClientBuilderFactory;
-import org.apache.sling.api.SlingHttpServletRequest;
-import org.apache.sling.api.SlingHttpServletResponse;
 import org.apache.sling.api.resource.LoginException;
 import org.apache.sling.api.resource.ResourceResolver;
 import org.apache.sling.api.resource.ResourceResolverFactory;
-import org.apache.sling.api.servlets.SlingAllMethodsServlet;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
@@ -50,29 +49,28 @@ import org.osgi.service.metatype.annotations.ObjectClassDefinition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.Servlet;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Component(
-        service = Servlet.class,
-        property = {
-                "sling.servlet.methods=POST",
-                "sling.servlet.paths=/bin/asset-share-commons/discovery"
-        }
-)
-@Designate(ocd = DiscoveryServlet.Config.class)
-public class DiscoveryServlet extends SlingAllMethodsServlet {
-    private static final Logger LOG = LoggerFactory.getLogger(DiscoveryServlet.class);
+/**
+ * Default {@link DiscoveryAgentClient} implementation.
+ *
+ * IMS-authenticated HTTP calling logic (obtains a bearer token via the configured
+ * {@code AccessTokenProvider} and issues the agent request), consumed by
+ * {@code DiscoverySearchProviderImpl} -- the single SearchProvider-based, single round-trip
+ * discovery flow.
+ */
+@Component(service = DiscoveryAgentClient.class)
+@Designate(ocd = DiscoveryAgentClientImpl.Config.class)
+public class DiscoveryAgentClientImpl implements DiscoveryAgentClient {
+    private static final Logger log = LoggerFactory.getLogger(DiscoveryAgentClientImpl.class);
     private static final int BUFFER_SIZE = 8192;
-    private static final int LOG_PREVIEW_MAX = 2000;
     private static final String ACCESS_TOKEN_PROVIDER_NAME = "name";
     private static final String DISCOVERY_IMS_CLIENT = "discovery-ims-client";
     private static final Map<String, Object> SERVICE_AUTH_INFO = Collections.<String, Object>singletonMap(
@@ -90,72 +88,41 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
     private transient String providerName;
 
     @Override
-    protected void doPost(final SlingHttpServletRequest request, final SlingHttpServletResponse response)
-            throws IOException {
+    public boolean isConfigured() {
+        return isValidEndpoint(config == null ? null : config.agent_endpoint());
+    }
+
+    @Override
+    public DiscoveryAgentResponse call(final String prompt, final String context) throws IOException {
         final String endpoint = config.agent_endpoint();
-        final String prompt = request.getParameter("prompt");
-        final String context = request.getParameter("context");
 
         if (!isValidEndpoint(endpoint)) {
-            LOG.warn("Discovery agent endpoint is not configured or is invalid; returning 503");
-            sendError(response, SlingHttpServletResponse.SC_SERVICE_UNAVAILABLE,
-                    "Discovery search is not configured.");
-            return;
+            throw new IOException("Discovery agent endpoint is not configured or is invalid.");
         }
 
-        if (StringUtils.isBlank(prompt) || StringUtils.isBlank(context)) {
-            LOG.debug("Discovery request rejected (400): promptBlank={}, contextBlank={}",
-                    StringUtils.isBlank(prompt), StringUtils.isBlank(context));
-            sendError(response, SlingHttpServletResponse.SC_BAD_REQUEST,
-                    "The prompt and context parameters are required.");
-            return;
+        final HttpPost agentRequest = new HttpPost(endpoint);
+        agentRequest.setEntity(new StringEntity(toDiscoveryRequestJson(prompt, context), ContentType.APPLICATION_JSON));
+        agentRequest.setHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType());
+        applyConfiguredHeaders(agentRequest);
+
+        final String authorization = getAuthorizationHeaderValue();
+        if (StringUtils.isNotBlank(authorization)) {
+            agentRequest.setHeader(HttpHeaders.AUTHORIZATION, authorization);
         }
 
-        final String endpointHost = hostOf(endpoint);
-        LOG.debug("Discovery agent request -> host [{}], prompt [{}], context [{}]",
-                endpointHost, preview(prompt), preview(context));
-
-        final long startedAt = System.currentTimeMillis();
-
-        try {
-            final HttpPost agentRequest = new HttpPost(endpoint);
-            agentRequest.setEntity(new StringEntity(toDiscoveryRequestJson(prompt, context), ContentType.APPLICATION_JSON));
-            agentRequest.setHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType());
-            applyConfiguredHeaders(agentRequest);
-
-            final String authorization = getAuthorizationHeaderValue();
-            if (StringUtils.isNotBlank(authorization)) {
-                agentRequest.setHeader(HttpHeaders.AUTHORIZATION, authorization);
-            }
-
-            try (CloseableHttpClient client = getHttpClient(config.http_timeout());
+        try (CloseableHttpClient client = getHttpClient(config.http_timeout());
              CloseableHttpResponse agentResponse = client.execute(agentRequest)) {
-                final HttpEntity entity = agentResponse.getEntity();
-                final byte[] responseBody = entity == null
-                        ? new byte[0]
-                        : readResponseBody(entity.getContent(), Math.max(1, config.max_response_bytes()));
+            final HttpEntity entity = agentResponse.getEntity();
+            final byte[] responseBody = entity == null
+                    ? new byte[0]
+                    : readResponseBody(entity.getContent(), Math.max(1, config.max_response_bytes()));
 
-                final int agentStatus = agentResponse.getStatusLine().getStatusCode();
-                final String agentContentType = agentResponse.getFirstHeader(HttpHeaders.CONTENT_TYPE) != null
-                        ? agentResponse.getFirstHeader(HttpHeaders.CONTENT_TYPE).getValue()
-                        : null;
+            final int agentStatus = agentResponse.getStatusLine().getStatusCode();
+            final String agentContentType = agentResponse.getFirstHeader(HttpHeaders.CONTENT_TYPE) != null
+                    ? agentResponse.getFirstHeader(HttpHeaders.CONTENT_TYPE).getValue()
+                    : null;
 
-                LOG.debug("Discovery agent response <- host [{}], status [{}], contentType [{}], bytes [{}], elapsedMs [{}], body [{}]",
-                        endpointHost, agentStatus, agentContentType, responseBody.length,
-                        System.currentTimeMillis() - startedAt,
-                        preview(new String(responseBody, StandardCharsets.UTF_8)));
-
-                response.setStatus(agentStatus);
-                if (agentContentType != null) {
-                    response.setContentType(agentContentType);
-                }
-                response.getOutputStream().write(responseBody);
-            }
-        } catch (IOException e) {
-            LOG.error("Unable to complete a discovery agent request to host [{}] after [{}] ms",
-                    endpointHost, System.currentTimeMillis() - startedAt, e);
-            sendError(response, SlingHttpServletResponse.SC_BAD_GATEWAY,
-                    "The discovery agent request failed.");
+            return new DiscoveryAgentResponse(agentStatus, agentContentType, responseBody);
         }
     }
 
@@ -264,7 +231,7 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         final Object name = properties.get(ACCESS_TOKEN_PROVIDER_NAME);
         if (name instanceof String && StringUtils.isNotBlank((String) name)) {
             availableTokenProviders.put((String) name, accessTokenProvider);
-            LOG.info("AccessTokenProvider (name: {}) added", name);
+            log.info("AccessTokenProvider (name: {}) added", name);
         }
     }
 
@@ -273,7 +240,7 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         final Object name = properties.get(ACCESS_TOKEN_PROVIDER_NAME);
         if (name instanceof String && StringUtils.isNotBlank((String) name)) {
             availableTokenProviders.remove(name, accessTokenProvider);
-            LOG.info("AccessTokenProvider (name: {}) removed", name);
+            log.info("AccessTokenProvider (name: {}) removed", name);
         }
     }
 
@@ -308,21 +275,6 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         return outputStream.toByteArray();
     }
 
-    private static String preview(final String value) {
-        if (value == null) {
-            return "";
-        }
-        return StringUtils.abbreviate(value, LOG_PREVIEW_MAX);
-    }
-
-    private String hostOf(final String endpoint) {
-        try {
-            return URI.create(endpoint).getHost();
-        } catch (IllegalArgumentException e) {
-            return "unknown";
-        }
-    }
-
     private boolean isValidEndpoint(final String endpoint) {
         if (StringUtils.isBlank(endpoint)) {
             return false;
@@ -338,14 +290,6 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         }
     }
 
-    private void sendError(final SlingHttpServletResponse response, final int status, final String message)
-            throws IOException {
-        response.setStatus(status);
-        response.setContentType("application/json");
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.getWriter().write("{\"error\":\"" + message + "\"}");
-    }
-
     @Activate
     @Modified
     protected void activate(final Config config) {
@@ -353,7 +297,7 @@ public class DiscoveryServlet extends SlingAllMethodsServlet {
         this.providerName = config.ims_provider_name();
     }
 
-    @ObjectClassDefinition(name = "Asset Share Commons - Discovery Agent Proxy")
+    @ObjectClassDefinition(name = "Asset Share Commons - Discovery Agent Client")
     public @interface Config {
         @AttributeDefinition(
                 name = "Agent endpoint",

@@ -64,9 +64,12 @@ import java.util.stream.StreamSupport;
 
 import static org.osgi.framework.Constants.SERVICE_RANKING;
 
-@Component(property = {
-        SERVICE_RANKING + ":Integer=" + Integer.MIN_VALUE
-})
+@Component(
+        service = {SearchProvider.class, QuerySearchProviderImpl.class},
+        property = {
+                SERVICE_RANKING + ":Integer=" + Integer.MIN_VALUE
+        }
+)
 public class QuerySearchProviderImpl implements SearchProvider {
     private static final Logger log = LoggerFactory.getLogger(QuerySearchProviderImpl.class);
 
