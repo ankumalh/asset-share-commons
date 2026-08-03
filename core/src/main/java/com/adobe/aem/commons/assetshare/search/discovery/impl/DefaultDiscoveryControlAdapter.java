@@ -435,13 +435,17 @@ public class DefaultDiscoveryControlAdapter implements DiscoveryControlAdapter {
     }
 
     private List<DiscoveryControlOption> options(final List<OptionItem> items) {
-        return items.stream()
-                .filter(item -> StringUtils.isNotBlank(item.getValue()))
-                .map(item -> new DiscoveryControlOption(
-                        item.getValue(),
-                        StringUtils.defaultString(item.getText(), item.getValue()),
-                        item.isDisabled()))
-                .collect(Collectors.toList());
+        final Map<String, DiscoveryControlOption> byValue = new LinkedHashMap<>();
+        for (final OptionItem item : items) {
+            if (StringUtils.isBlank(item.getValue()) || byValue.containsKey(item.getValue())) {
+                continue;
+            }
+            byValue.put(item.getValue(), new DiscoveryControlOption(
+                    item.getValue(),
+                    StringUtils.defaultString(item.getText(), item.getValue()),
+                    item.isDisabled()));
+        }
+        return new ArrayList<>(byValue.values());
     }
 
     private List<DiscoveryControlOption> sortOptions(final List<OptionItem> items) {

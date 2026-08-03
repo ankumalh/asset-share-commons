@@ -72,7 +72,7 @@ public class DiscoveryResolverImpl implements DiscoveryResolver {
     private static final String PARAM_FULLTEXT = "fulltext";
     private static final String PARAM_AI_FULLTEXT = "ai-fulltext";
     private static final int MAX_CONTROLS = 100;
-    private static final int MAX_OPTIONS_PER_CONTROL = 500;
+    private static final int MAX_OPTIONS_PER_CONTROL = 1000;
     private static final int MAX_MODEL_ROOTS = 20;
     private static final int MAX_CONTEXT_BYTES = 128 * 1024;
     private static final int MAX_REDIRECT_URL_LENGTH = 16 * 1024;
