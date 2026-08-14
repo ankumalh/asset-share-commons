@@ -110,6 +110,24 @@ AssetShare.Search.Form = function (ns) {
         }
     }
 
+    // A prior /discovery turn's resolved facets are rendered as normal, checked predicate
+    // inputs (N_group.<predicate>.<param>) once the page reloads at the resolved URL. Without
+    // this, each new /discovery submission would serialize that stale resolved state as its
+    // baseline and layer the next prompt's resolution on top of it, instead of starting fresh.
+    function removeDiscoveryResolvedFields(formDataToUpdate) {
+        var names = {};
+
+        formDataToUpdate.getAll().forEach(function(field) {
+            if (/^\d+_group\./.test(field.name)) {
+                names[field.name] = true;
+            }
+        });
+
+        Object.keys(names).forEach(function(name) {
+            removeAll(formDataToUpdate, name);
+        });
+    }
+
     function applyActionFields(targetFormData, event) {
         $("[data-asset-share-search-actions]").each(function() {
             removeAll(targetFormData, $(this).attr("name"));
@@ -180,6 +198,7 @@ AssetShare.Search.Form = function (ns) {
         reset();
         clone = clean(formData.clone());
         clone = _adjustFormData(clone);
+        removeDiscoveryResolvedFields(clone);
 
         $("[data-asset-share-search-actions]").each(function() {
             removeAll(clone, $(this).attr("name"));

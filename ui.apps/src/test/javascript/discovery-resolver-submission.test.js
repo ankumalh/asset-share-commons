@@ -175,7 +175,10 @@ Collection.prototype.serializeArray = function() {
     currentState = form.serializeDiscoveryStateFor("search", ["fulltext"]);
 
     assert.strictEqual(currentState.indexOf("fulltext"), -1);
-    assert.ok(currentState.indexOf("4_group.propertyvalues.0_values=image%2Fpng") > -1);
+    assert.strictEqual(currentState.indexOf("4_group.propertyvalues"), -1,
+        "a prior turn's resolved predicate-group state must not leak into the next discovery " +
+        "submission's baseline, otherwise each new /discovery prompt is evaluated on top of " +
+        "stale facets instead of fresh (and can 400 once the resolver reuses the same group index)");
     assert.ok(currentState.indexOf("customer=one&customer=two") > -1);
     assert.ok(currentState.indexOf("prompt=customer-prompt") > -1);
     assert.ok(currentState.indexOf("context=customer-context") > -1);
